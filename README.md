@@ -119,7 +119,7 @@ Client polls GET /scan/:id → receives result
 
 ```bash
 # 1. Clone and install
-git clone <repo>
+git clone https://github.com/TanvirTian/Lunaris
 cd lunaris
 
 # 2. Backend
