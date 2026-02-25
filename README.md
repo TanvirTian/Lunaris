@@ -1,62 +1,84 @@
-
 # 🌙 Lunaris
 
-**Lunaris** is a privacy-focused website analysis engine that scans any public URL and reveals trackers, cookies, third-party data flows, and dark patterns using a scalable, asynchronous crawler architecture.
+**Privacy analysis engine for the modern web.**
 
-Built with production-grade backend patterns, queue-based processing, and containerized infrastructure.
+Lunaris scans any public URL and surfaces trackers, cookies, fingerprinting vectors, third-party data flows, and dark patterns — processed asynchronously through a production-grade queue architecture.
 
-
-##  What It Does
-
-Lunaris:
-
-* Crawls websites using headless Chromium
-* Detects tracking scripts and third-party domains
-* Analyzes cookies and external resources
-* Identifies dark pattern signals
-* Generates a privacy risk score
-* Processes scans asynchronously via job queues
+[![Node.js](https://img.shields.io/badge/Node.js-20-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
+[![Fastify](https://img.shields.io/badge/Fastify-4-000000?style=flat-square&logo=fastify&logoColor=white)](https://fastify.dev)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://postgresql.org)
+[![Prisma](https://img.shields.io/badge/Prisma-ORM-2D3748?style=flat-square&logo=prisma&logoColor=white)](https://prisma.io)
+[![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
 
 
-# Architecture Overview
+## What Lunaris Does
 
-Lunaris uses a queue-based processing model for reliability and scalability:
+Submit any URL. Lunaris launches a headless Chromium instance, crawls the site across multiple pages, and produces a detailed privacy report:
+
+- **Tracker detection** — identifies known tracking scripts, pixels, and third-party domains
+- **Cookie analysis** — classifies cookies by purpose, lifetime, and security attributes
+- **Fingerprinting detection** — detects canvas, WebGL, and font fingerprinting attempts
+- **Ownership graph** — maps tracker domains back to parent corporations
+- **Dark pattern signals** — surfaces consent manipulation and deceptive UI patterns
+- **Privacy score** — 0–100 score with per-signal deductions and risk classification
+
+Scans are processed asynchronously. The API returns a job ID immediately and the client polls for results — no HTTP timeouts, no blocking.
+
+
+## Architecture
 
 ```
 Client
-  ↓
-Fastify API
-  ↓
-Redis (BullMQ Queue)
-  ↓
-Worker Process (Playwright)
-  ↓
-PostgreSQL (Results Storage)
+  │
+  ▼
+┌─────────────────────────────┐
+│       Fastify API           │  ← validates URL, deduplicates, returns jobId (202)
+│   Rate limiting · SSRF      │
+└────────────┬────────────────┘
+             │ enqueue
+             ▼
+┌─────────────────────────────┐
+│     Redis + BullMQ          │  ← persistent job queue, retry logic, DLQ
+└────────────┬────────────────┘
+             │ dequeue
+             ▼
+┌─────────────────────────────┐
+│        Worker               │  ← Playwright crawl → analysis → score
+│   Concurrency controlled    │
+└────────────┬────────────────┘
+             │ persist
+             ▼
+┌─────────────────────────────┐
+│       PostgreSQL            │  ← ScanJob + ScanResult, source of truth
+└─────────────────────────────┘
+             │
+             ▼
+Client polls GET /scan/:id → receives result
 ```
 
-### Key Design Decisions
+**Key design decisions:**
 
-* Asynchronous scan lifecycle (no blocking HTTP requests)
-* Redis-backed job queue (BullMQ)
-* PostgreSQL for durable scan results
-* Playwright with system Chromium (no runtime downloads)
-* Containerized multi-service deployment via Docker Compose
+- API layer never touches Playwright — returns in <100ms regardless of crawl time
+- Redis holds transient queue state. PostgreSQL holds all permanent data
+- Single Docker image runs as both API server and worker (different commands)
+- DNS pre-resolution + private IP blocking before any browser is launched
+- Atomic DB transactions — no SUCCESS job without a result, no orphaned records
 
-# 🧰 Tech Stack
 
-| Layer            | Technology              |
-| ---------------- | ----------------------- |
-| Backend API      | Node.js + Fastify       |
-| ORM              | Prisma                  |
-| Database         | PostgreSQL              |
-| Queue            | Redis + BullMQ          |
-| Crawling Engine  | Playwright (Chromium)   |
-| Frontend         | Vite + React            |
+## Tech Stack
 
+| Layer | Technology | Purpose |
+|---|---|---|
+| API Server | Fastify 4 | HTTP layer, rate limiting, schema validation |
+| ORM | Prisma 5 | Type-safe PostgreSQL access, migrations |
+| Database | PostgreSQL 16 | Permanent storage, JSONB result blobs |
+| Queue | BullMQ + Redis 7 | Async job processing, retries, DLQ |
+| Crawler | Playwright + Chromium | Headless browser, fingerprint detection |
+| Frontend | React 18 + Vite | UI, result polling |
 
 
 # Project Structure
-
 ```
 .
 ├── backend
@@ -66,7 +88,6 @@ PostgreSQL (Results Storage)
 │   │   ├── metrics.js
 │   │   ├── queue.js
 │   │   ├── redis.js
-│   │   └── scanQueue.js
 │   ├── prisma/
 │   │   ├── migrations/
 │   │   └── schema.prisma
@@ -92,73 +113,118 @@ PostgreSQL (Results Storage)
 └── README.md
 ```
 
-# Local Development
+## Local Development 
 
-### Backend
+**Prerequisites:** Node.js 20+, PostgreSQL, Redis
 
 ```bash
+# 1. Clone and install
+git clone <repo>
+cd lunaris
+
+# 2. Backend
 cd backend
 npm install
+cp .env.example .env
+# Edit .env — set DATABASE_URL and REDIS_URL
+
+# 3. Run database migrations
 npx prisma migrate dev
-npm start
-```
 
-### Frontend
+# 4. Start backend + worker (two terminals)
+npm start          # terminal 1 — API on http://localhost:8000
+node worker.js     # terminal 2 — background worker
 
-```bash
-cd frontend
+# 5. Frontend
+cd ../frontend
 npm install
-npm run dev
+npm run dev        # http://localhost:3000
 ```
 
-Services started:
 
-* API → `http://localhost:3001`
-* PostgreSQL
-* Redis
-* Worker (background scan processor)
+## API Reference
+
+### `POST /analyze`
+Submit a URL for scanning.
+
+```json
+// Request
+{ "url": "https://example.com" }
+
+// Response 202
+{
+  "jobId": "uuid",
+  "status": "PENDING",
+  "pollUrl": "/scan/uuid"
+}
+```
+
+### `GET /scan/:id`
+Poll scan status and retrieve results.
+
+```json
+// Response (SUCCESS)
+{
+  "jobId": "uuid",
+  "status": "SUCCESS",
+  "result": {
+    "score": 74,
+    "riskLevel": "MODERATE",
+    "summary": "...",
+    "trackerCount": 3,
+    "fingerprinting": { "canvas": false, "webgl": true },
+    "data": { ... }
+  }
+}
+```
+
+### `GET /health`
+```json
+{ "status": "ok", "services": { "database": { "ok": true }, "redis": { "ok": true } } }
+```
+
+### `GET /metrics`
+Returns queue depth, success/failure rates, crawl duration buckets, memory usage.
+
+## Privacy Score Model
+
+Score starts at **100**. Deductions are applied per signal:
+
+| Signal | Deduction |
+|---|---|
+| Known tracker domain | −5 per tracker |
+| Canvas / WebGL fingerprinting | −10 |
+| Keylogger detected | −15 |
+| Missing HTTPS | −20 |
+| High-risk obfuscated scripts | −5 each |
+| Dark pattern indicators | −5 each |
+
+Final score is clamped to **0–100** and classified:
+
+| Score | Risk Level |
+|---|---|
+| 80–100 | Low |
+| 60–79 | Moderate |
+| 40–59 | Elevated |
+| 0–39 | High |
 
 
-# 🔍 Scoring Model
+## Security
 
-Privacy score starts at **100** and deductions are applied based on:
+- **SSRF protection** — DNS pre-resolution, private IP range blocking (RFC1918, link-local, CGNAT), metadata endpoint blocking
+- **Rate limiting** — 10 requests/minute per IP
+- **Input validation** — structural URL parsing, no-dot hostname check, protocol allowlist
+- **Non-root containers** — all Docker containers run as the `node` user
+- **No secret baking** — environment variables only, never in image layers
 
-* Tracker detections
-* Cookie volume
-* HTTPS usage
-* External script domains
-* Dark pattern indicators
+## Scaling
 
-Final score is clamped between **0–100**.
+The architecture supports horizontal scaling without code changes:
 
-
-##  Performance & Optimization
-
--   Queue-based async processing (API never blocks)
-    
--   Dedicated worker for browser workloads
-    
--   Controlled concurrency via Redis + BullMQ
-   
--   Headless Chromium with optimized launch settings
-
--  Structured logging and metrics collection for system observability.
--  Automatic job retry and failure state persistence via queue lifecycle management.
-    
-
-# Security Design
-
-* Strict URL validation
-* Internal IP/DNS protections
-* Headless Chromium isolation
-* No execution of arbitrary injected scripts
-* Asynchronous job isolation (no direct user-triggered browser execution)
+- **Multiple API servers** — stateless, add a load balancer in front
+- **Multiple workers** — point additional `worker.js` instances at the same Redis and PostgreSQL. BullMQ's job locking ensures each job is processed exactly once
+- **Database** — add PostgreSQL read replicas for analytics queries, PgBouncer for connection pooling at high concurrency
 
 
-
-# Why Lunaris?
-
-
-Lunaris is built to demonstrate production system design around heavy, stateful workloads. The focus is on reliability, isolation, observability, and scalable asynchronous processing rather than raw crawling functionality.
-
+Built as a production system design study in asynchronous processing, browser automation, and privacy analysis.
 

@@ -16,7 +16,7 @@ const fastify = Fastify({
   logger: false, // we use our own structured logger
 });
 
-// ── Rate limiting ─────────────────────────────────────────────────────────────
+// Rate limiting
 // Prevents a single client from flooding the queue with crawl requests.
 // 10 requests per minute per IP is generous for a scan tool.
 // Adjust based on your expected user patterns.
@@ -28,13 +28,13 @@ await fastify.register(rateLimit, {
   }),
 });
 
-// ── CORS ──────────────────────────────────────────────────────────────────────
+// CORS
 await fastify.register(cors, {
   origin:  process.env.CORS_ORIGIN || 'http://localhost:5173',
   methods: ['GET', 'POST', 'DELETE'],
 });
 
-// ── Request logging hook ──────────────────────────────────────────────────────
+// Request logging hook
 fastify.addHook('onRequest', (request, reply, done) => {
   logger.info(
     { requestId: request.id, method: request.method, url: request.url },
@@ -51,17 +51,17 @@ fastify.addHook('onResponse', (request, reply, done) => {
   done();
 });
 
-// ── Routes ────────────────────────────────────────────────────────────────────
+// Routes
 await fastify.register(analyzeRoute);
 await fastify.register(scanRoutes);
 await fastify.register(healthRoute);
 
-// ── 404 handler ───────────────────────────────────────────────────────────────
+// 404 handler
 fastify.setNotFoundHandler((request, reply) => {
   reply.status(404).send({ error: `Route ${request.method} ${request.url} not found` });
 });
 
-// ── Global error handler ──────────────────────────────────────────────────────
+// Global error handler
 // Never expose raw stack traces to clients
 fastify.setErrorHandler((err, request, reply) => {
   logger.error(
@@ -82,7 +82,7 @@ fastify.setErrorHandler((err, request, reply) => {
   reply.status(500).send({ error: 'An internal error occurred. Please try again.' });
 });
 
-// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// Graceful shutdown
 fastify.addHook('onClose', async () => {
   logger.info('shutdown sequence started');
   await shutdownWorker();   // wait for active jobs to finish
@@ -101,9 +101,9 @@ for (const signal of signals) {
   });
 }
 
-// ── Start ─────────────────────────────────────────────────────────────────────
+// Start
 try {
-  const PORT = parseInt(process.env.PORT || '3001', 10);
+  const PORT = parseInt(process.env.PORT || '8000', 10);
   await fastify.listen({ port: PORT, host: '0.0.0.0' });
   logger.info({ port: PORT }, '🛡  Privacy Analyzer API running');
 } catch (err) {

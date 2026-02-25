@@ -1,15 +1,4 @@
-/**
- * API client — handles the async job polling pattern.
- *
- * Flow:
- *   1. POST /analyze  → returns { jobId, status: 'PENDING' }
- *   2. Poll GET /scan/:id every POLL_INTERVAL_MS
- *   3. When status = SUCCESS → resolve with result
- *   4. When status = FAILED  → reject with errorMessage
- *   5. onProgress callback fires on each poll with current status
- */
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const POLL_INTERVAL_MS = 2500;
 const MAX_POLL_ATTEMPTS = 60; // 60 × 2.5s = 2.5 minutes max wait
 

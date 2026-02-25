@@ -66,7 +66,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="header">
-        <p className="header-label">// privacy data flow analyzer</p>
+        <p className="header-label">privacy data flow analyzer</p>
         <h1>Who's watching<br /><span>your traffic?</span></h1>
         <p>Deep-scans websites for trackers, script obfuscation, cookie abuse, corporate data collectors, fingerprinting and more — across multiple pages.</p>
       </header>
