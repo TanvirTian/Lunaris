@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+
+# Environment Secrets
+.env
+.env.example
+backend/.env
+backend/.env.example
+frontend/.env
+
+# Prisma
+backend/prisma/*.db
+backend/prisma/*.db-journal
+
+# Keep migration history but avoid temp artifacts
+backend/prisma/migrations/*/*.tmp
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Playwright / Testing Artifacts
+backend/.cache/
+backend/playwright-report/
+backend/test-results/
+backend/storage/
+
+# Build Outputs
+frontend/dist/
+frontend/.vite/
+backend/dist/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDE Configs
+.vscode/
+.idea/
+
+# Temporary Files
+*.tmp
+*.swp
+*.swo
+
+# Coverage Reports
+coverage/
+
+# Prisma Runtime Client (Optional)
+# Usually safe to ignore
+backend/node_modules/.prisma/

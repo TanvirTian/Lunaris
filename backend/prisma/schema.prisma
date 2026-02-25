@@ -1,0 +1,129 @@
+// =============================================================================
+// Prisma Schema — Privacy Analyzer
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+enum ScanStatus {
+  PENDING   // Job created, queued, not yet picked up
+  RUNNING   // Crawler is active right now
+  SUCCESS   // Crawl + analysis completed successfully
+  FAILED    // Crawl or analysis threw an error
+}
+
+enum RiskLevel {
+  LOW       // score >= 80
+  MODERATE  // score 60-79
+  ELEVATED  // score 40-59
+  HIGH      // score < 40
+}
+
+// =============================================================================
+// User
+// Stub model - userId is nullable on ScanJob so the app works without auth.
+// Adding auth later requires zero schema changes to ScanJob or ScanResult.
+// =============================================================================
+
+model User {
+  id        String    @id @default(uuid()) @db.Uuid
+  email     String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  scans     ScanJob[]
+
+  @@map("users")
+}
+
+// =============================================================================
+// ScanJob
+//
+// Represents the intent to scan a URL and the lifecycle of that operation.
+// Deliberately separated from ScanResult because:
+//
+//   1. A job can FAIL - there may never be a result
+//   2. A job can be RETRIED - same job, new result attempt
+//   3. Status polling (GET /scan/:id) works independently of result existence
+//   4. Queue systems (BullMQ etc.) operate on jobs, not results
+//   5. You can track cost, duration, error rates per job in analytics
+// =============================================================================
+
+model ScanJob {
+  id           String     @id @default(uuid()) @db.Uuid
+  userId       String?    @db.Uuid
+  targetUrl    String
+  status       ScanStatus @default(PENDING)
+  errorMessage String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  user         User?      @relation(fields: [userId], references: [id])
+  result       ScanResult?
+
+  @@index([targetUrl])
+  @@index([status])
+  @@index([userId])
+  @@index([createdAt(sort: Desc)])
+  @@index([targetUrl, createdAt(sort: Desc)])
+
+  @@map("scan_jobs")
+}
+
+// =============================================================================
+// ScanResult
+//
+// Stores analysis output. Only exists when job.status = SUCCESS.
+// One-to-one with ScanJob enforced by @unique on scanJobId.
+//
+// Typed columns + rawData JSONB:
+//   Typed columns enable SQL aggregations and indexed queries.
+//   rawData (JSONB) stores the complete blob - nothing is ever lost,
+//   and no migration is needed when the analyzer adds new signals.
+// =============================================================================
+
+model ScanResult {
+  id        String @id @default(uuid()) @db.Uuid
+  scanJobId String @unique @db.Uuid
+
+  score             Int
+  riskLevel         RiskLevel
+  summary           String
+  trackerCount      Int     @default(0)
+  cookieCount       Int     @default(0)
+  externalDomains   Int     @default(0)
+  isHttps           Boolean @default(false)
+  pagesCrawled      Int     @default(1)
+  hasCsp            Boolean @default(false)
+  canvasFingerprint Boolean @default(false)
+  webglFingerprint  Boolean @default(false)
+  fontFingerprint   Boolean @default(false)
+  keylogger         Boolean @default(false)
+
+  rawData Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  scanJob ScanJob @relation(fields: [scanJobId], references: [id], onDelete: Cascade)
+
+  @@index([score])
+  @@index([riskLevel])
+  @@index([createdAt(sort: Desc)])
+  @@index([canvasFingerprint])
+  @@index([keylogger])
+
+  @@map("scan_results")
+}
