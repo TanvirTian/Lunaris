@@ -1,30 +1,3 @@
-/**
- * Structured Logger
- * -----------------------------------------------------------------------------
- * Wraps Fastify's pino logger for use outside of route handlers
- * (workers, queue processors, services).
- *
- * Why structured logging?
- *   Plain console.log() produces unqueryable text blobs.
- *   Structured JSON logs can be ingested by:
- *     - Grafana Loki
- *     - Datadog
- *     - AWS CloudWatch
- *     - ELK stack
- *   And queried by field: "show all logs where jobId = X and level = error"
- *
- * Every log entry automatically includes:
- *   - timestamp (ISO 8601)
- *   - level (info/warn/error/debug)
- *   - service name
- *   - any extra fields passed as first argument
- * -----------------------------------------------------------------------------
- */
-
-// Minimal structured logger that works without pino installed as a direct dep
-// (pino is bundled with Fastify — we reuse it)
-// If you add pino directly: npm install pino pino-pretty
-
 const SERVICE = process.env.SERVICE_NAME || 'privacy-analyzer';
 const IS_DEV  = process.env.NODE_ENV !== 'production';
 

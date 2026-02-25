@@ -1,24 +1,3 @@
-/**
- * Redis Connection
- * -----------------------------------------------------------------------------
- * Single IORedis instance shared across BullMQ producers and workers.
- *
- * Why IORedis and not the built-in BullMQ redis option?
- *   BullMQ accepts an IORedis instance directly, which lets us:
- *   - Share one connection pool across queue + worker + health checks
- *   - Handle reconnection logic in one place
- *   - Monitor connection state for the health endpoint
- *
- * Why NOT use Redis as a database?
- *   Redis is volatile. A restart without persistence config loses all data.
- *   We use it exclusively for:
- *     1. BullMQ job queue state (transient — jobs move to PostgreSQL on completion)
- *     2. Short-lived deduplication keys (TTL-based)
- *     3. Rate limiting counters (TTL-based)
- *   PostgreSQL remains the single source of truth for all permanent data.
- * -----------------------------------------------------------------------------
- */
-
 import IORedis from 'ioredis';
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';

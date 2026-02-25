@@ -1,17 +1,7 @@
-/**
- * Scan Routes
- * -----------------------------------------------------------------------------
- * GET /scan/:id       — poll a single job (status + result if complete)
- * GET /scans          — paginated scan history, filterable by URL / status
- * DELETE /scan/:id    — cancel a pending job or delete a completed one
- * -----------------------------------------------------------------------------
- */
-
 import { db } from '../lib/db.js';
 
 export default async function scanRoutes(fastify) {
 
-  // ── GET /scan/:id ──────────────────────────────────────────────────────────
   // Primary polling endpoint. Clients call this after POST /analyze.
   // Returns job metadata + result if SUCCESS, errorMessage if FAILED.
   fastify.get('/scan/:id', {

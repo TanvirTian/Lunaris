@@ -1,8 +1,3 @@
-/**
- * Cookie Deep Analysis Panel
- * Shows per-cookie breakdown: purpose, lifetime, security attributes,
- * third-party status, and company attribution.
- */
 const PURPOSE_COLOR = {
   tracking:   'var(--danger)',
   session:    'var(--safe)',

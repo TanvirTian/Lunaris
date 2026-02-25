@@ -1,21 +1,3 @@
-/**
- * Fastify Server
- * -----------------------------------------------------------------------------
- * Starts the API server and the BullMQ worker in the same process.
- *
- * Single-process mode (current):
- *   API server + worker run together. Simple, sufficient for early production.
- *   To split: run `node worker.js` separately and remove worker import here.
- *
- * Graceful shutdown order:
- *   1. Stop accepting new HTTP requests
- *   2. Stop worker picking up new jobs (let active jobs finish)
- *   3. Disconnect from Redis
- *   4. Disconnect from PostgreSQL
- *   This order prevents new work from starting while shutdown is in progress.
- * -----------------------------------------------------------------------------
- */
-
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';

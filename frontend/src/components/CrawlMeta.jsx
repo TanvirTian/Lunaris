@@ -1,6 +1,3 @@
-/**
- * Shows crawl coverage + advanced network metadata.
- */
 export default function CrawlMeta({ meta }) {
   if (!meta) return null;
 

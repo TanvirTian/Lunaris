@@ -1,16 +1,3 @@
-/**
- * GET /health
- * GET /metrics
- * -----------------------------------------------------------------------------
- * /health  — used by load balancers and uptime monitors
- *            returns 200 if healthy, 503 if degraded
- *
- * /metrics — internal dashboard endpoint
- *            returns detailed operational stats
- *            should be protected behind auth or internal network in production
- * -----------------------------------------------------------------------------
- */
-
 import { checkDbHealth } from '../lib/db.js';
 import { checkRedisHealth } from '../lib/redis.js';
 import { getQueueMetrics } from '../lib/queue.js';

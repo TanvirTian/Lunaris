@@ -1,28 +1,3 @@
-/**
- * BullMQ Queue + Flow Configuration
- * -----------------------------------------------------------------------------
- * Defines the scan queue, its retry policy, and the Dead Letter Queue (DLQ).
- *
- * Queue Architecture:
- *
- *   SCAN_QUEUE
- *     ↓ (on success)     → job marked SUCCESS in PostgreSQL
- *     ↓ (on failure)     → BullMQ retries with backoff
- *     ↓ (maxAttempts hit) → moved to SCAN_DLQ automatically
- *
- * Why a Dead Letter Queue?
- *   Without a DLQ, permanently failing jobs (malformed URLs that passed
- *   validation, sites with exotic TLS configs, etc.) would retry forever
- *   and consume worker capacity. The DLQ captures them for inspection
- *   without blocking new work.
- *
- * Job Priority Levels:
- *   1 = highest priority (reserved for future premium/paid tier)
- *   2 = normal (default for all anonymous scans)
- *   Higher number = lower priority in BullMQ
- * -----------------------------------------------------------------------------
- */
-
 import { Queue, QueueEvents } from 'bullmq';
 import { redis } from './redis.js';
 

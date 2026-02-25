@@ -1,8 +1,3 @@
-/**
- * Script Intelligence Panel
- * Shows obfuscation analysis, entropy scores, eval detection,
- * and data exfiltration patterns per external script.
- */
 export default function ScriptIntelligence({ scripts }) {
   if (!scripts?.length) return (
     <div className="section">

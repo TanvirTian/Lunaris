@@ -1,28 +1,3 @@
-/**
- * BullMQ Worker
- * -----------------------------------------------------------------------------
- * Processes scan jobs from the queue.
- *
- * Can run as:
- *   A) Same process as the API server (current setup — simplest)
- *   B) Separate process: `node worker.js` (run alongside server.js)
- *   C) Separate Docker container (future horizontal scaling)
- *
- * In all three cases, this file is identical.
- * The only difference is how you start it.
- *
- * Concurrency model:
- *   WORKER_CONCURRENCY controls how many Playwright instances run in parallel.
- *   Rule of thumb: available_RAM_gb / 0.5, capped at CPU core count.
- *   Default: 2 (safe for most VPS/cloud instances with 2-4GB RAM)
- *
- * Crash recovery:
- *   BullMQ tracks a "lock" on each active job. If this process crashes,
- *   the lock expires after STALL_INTERVAL_MS and BullMQ re-queues the job
- *   for another worker to pick up. No manual intervention needed.
- * -----------------------------------------------------------------------------
- */
-
 import { Worker } from 'bullmq';
 import { redis } from './lib/redis.js';
 import { db, disconnectDb } from './lib/db.js';
@@ -34,7 +9,7 @@ import { analyzePrivacy } from './services/analyzer.js';
 
 const WORKER_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || '2', 10);
 
-// ── Risk level helper ─────────────────────────────────────────────────────────
+
 function scoreToRiskLevel(score) {
   if (score >= 80) return 'LOW';
   if (score >= 60) return 'MODERATE';
@@ -42,7 +17,7 @@ function scoreToRiskLevel(score) {
   return 'HIGH';
 }
 
-// ── Job processor ─────────────────────────────────────────────────────────────
+
 async function processScanJob(job) {
   const { jobId, url } = job.data;
   const log = logger.child({ jobId, bullJobId: job.id, url });
@@ -60,18 +35,18 @@ async function processScanJob(job) {
   // Update BullMQ job progress (visible in Bull Board UI)
   await job.updateProgress(10);
 
-  // ── Crawl ──────────────────────────────────────────────────────────────────
+  //Crawl
   log.info('starting crawl');
   const crawlData = await crawlWebsite(url);
   await job.updateProgress(60);
   log.info({ pagesCrawled: crawlData.pagesCrawled?.length }, 'crawl complete');
 
-  // ── Analyze ───────────────────────────────────────────────────────────────
+  //Analyze
   log.info('starting analysis');
   const analysis = await analyzePrivacy(crawlData);
   await job.updateProgress(90);
 
-  // ── Persist result (transaction) ───────────────────────────────────────────
+  // Persist result (transaction) 
   await db.$transaction([
     db.scanResult.create({
       data: {
@@ -107,7 +82,7 @@ async function processScanJob(job) {
   return { score: analysis.score, durationMs };
 }
 
-// ── Worker instance ────────────────────────────────────────────────────────────
+// Worker instance
 export const scanWorker = new Worker(QUEUE_NAME, processScanJob, {
   connection: redis,
   concurrency: WORKER_CONCURRENCY,
@@ -125,7 +100,7 @@ export const scanWorker = new Worker(QUEUE_NAME, processScanJob, {
   stalledInterval: 30_000,
 });
 
-// ── Worker event handlers ─────────────────────────────────────────────────────
+// Worker event handlers 
 scanWorker.on('active', (job) => {
   logger.debug({ bullJobId: job.id, jobId: job.data.jobId }, 'worker picked up job');
 });
@@ -184,7 +159,7 @@ scanWorker.on('stalled', (jobId) => {
   logger.warn({ bullJobId: jobId }, 'job stalled — will be re-queued by BullMQ');
 });
 
-// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// Graceful shutdown 
 export async function shutdownWorker() {
   logger.info('shutting down worker...');
   // close() waits for active jobs to finish before stopping

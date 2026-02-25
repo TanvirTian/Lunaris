@@ -1,25 +1,3 @@
-/**
- * Metrics Collection
- * -----------------------------------------------------------------------------
- * In-process counters and timers for operational visibility.
- *
- * This is an intentionally lightweight implementation.
- * It works out of the box with zero new dependencies.
- *
- * Upgrade path when you need real metrics:
- *   - Replace with prom-client → exposes /metrics for Prometheus scraping
- *   - Prometheus + Grafana dashboards for real-time visualization
- *   - Or ship to Datadog/New Relic via their Node agent
- *
- * Current metrics exposed via GET /health:
- *   - scans.started      total scans enqueued
- *   - scans.succeeded    total scans completed successfully
- *   - scans.failed       total scans that failed (all retries exhausted)
- *   - scans.duration_ms  histogram buckets for crawl duration
- *   - queue.*            live queue depth from BullMQ
- * -----------------------------------------------------------------------------
- */
-
 const counters = {
   scans_started:   0,
   scans_succeeded: 0,

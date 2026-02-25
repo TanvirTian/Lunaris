@@ -1,24 +1,3 @@
-/**
- * Prisma Client Singleton
- * -----------------------------------------------------------------------------
- * Why singleton?
- *
- * PrismaClient manages an internal connection pool. Creating a new instance
- * per request would:
- *   - Exhaust PostgreSQL max_connections instantly under load
- *   - Create memory leaks from unclosed pools
- *   - Make "too many clients" errors inevitable
- *
- * The singleton ensures exactly ONE PrismaClient per process.
- *
- * Development hot-reload problem:
- *   Node's module cache is cleared on each file change (nodemon/--watch),
- *   but globalThis persists for the process lifetime. We cache the instance
- *   on globalThis in development so hot-reloads don't create new pools.
- *   In production this branch is never taken (fresh process each deploy).
- * -----------------------------------------------------------------------------
- */
-
 import { PrismaClient } from '@prisma/client';
 
 function buildPrismaClient() {

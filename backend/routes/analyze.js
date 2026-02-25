@@ -1,11 +1,3 @@
-/**
- * POST /analyze
- * -----------------------------------------------------------------------------
- * Validates URL → deduplicates → creates ScanJob → enqueues to BullMQ.
- * Returns HTTP 202 with jobId immediately (non-blocking).
- * -----------------------------------------------------------------------------
- */
-
 import { db } from '../lib/db.js';
 import { scanQueue } from '../lib/queue.js';
 import { logger } from '../lib/logger.js';
