@@ -1,3 +1,4 @@
+
 # 🌙 Lunaris
 
 **Privacy analysis engine for the modern web.**
@@ -91,50 +92,65 @@ Browser polls GET /scan/:id → receives result
 
 
 ## Project Structure
-
 ```
-.
-├── docker-compose.yml         
-├── docker-compose.dev.yml       
-├── .env                        
-├── .env.example
-│
-├── backend/
-│   ├── Dockerfile              
-│   ├── .env                    
-│   ├── .env.example
-│   ├── server.js               
-│   ├── worker.js               
-│   ├── lib/
-│   │   ├── db.js               
-│   │   ├── queue.js            
-│   │   ├── redis.js            
-│   │   ├── logger.js           
-│   │   └── metrics.js          
-│   ├── routes/
-│   │   ├── analyze.js          
-│   │   ├── scan.js             
-│   │   └── health.js           
-│   ├── services/
-│   │   ├── crawler.js          
-│   │   ├── analyzer.js         
-│   │   ├── cookieAnalysis.js   
-│   │   ├── ownershipGraph.js   
-│   │   └── scriptIntelligence.js
-│   └── prisma/
-│       ├── schema.prisma
-│       └── migrations/
-│
-└── frontend/
-    ├── Dockerfile              
-    ├── Dockerfile.dev          
-    ├── nginx.conf              
-    ├── .env                    
-    └── src/
-        ├── App.jsx
-        ├── lib/api.js          
-        └── components/
-
+.  
+├── backend  
+│ ├── DB_SETUP.md  
+│ ├── Dockerfile  
+│ ├── lib  
+│ │ ├── db.js  
+│ │ ├── logger.js  
+│ │ ├── metrics.js  
+│ │ ├── queue.js  
+│ │ └── redis.js  
+│ ├── package.json  
+│ ├── package-lock.json  
+│ ├── prisma  
+│ │ ├── migrations  
+│ │ │ ├── 20260223184806_init  
+│ │ │ │ └── migration.sql  
+│ │ │ └── migration_lock.toml  
+│ │ └── schema.prisma  
+│ ├── routes  
+│ │ ├── analyze.js  
+│ │ ├── health.js  
+│ │ └── scan.js  
+│ ├── server.js  
+│ ├── services  
+│ │ ├── analyzer.js  
+│ │ ├── cookieAnalysis.js  
+│ │ ├── crawler.js  
+│ │ ├── ownershipGraph.js  
+│ │ └── scriptIntelligence.js  
+│ └── worker.js  
+├── docker-compose.dev.yml  
+├── docker-compose.yml  
+├── frontend  
+│ ├── Dockerfile  
+│ ├── Dockerfile.dev  
+│ ├── index.html  
+│ ├── nginx.conf  
+│ ├── package.json  
+│ ├── package-lock.json  
+│ ├── src  
+│ │ ├── App.jsx  
+│ │ ├── components  
+│ │ │ ├── CookieAnalysis.jsx  
+│ │ │ ├── CrawlMeta.jsx  
+│ │ │ ├── DarkPatterns.jsx  
+│ │ │ ├── DomainCloud.jsx  
+│ │ │ ├── FingerprintReport.jsx  
+│ │ │ ├── OwnershipGraph.jsx  
+│ │ │ ├── ScoreMeter.jsx  
+│ │ │ ├── ScriptIntelligence.jsx  
+│ │ │ ├── SignalList.jsx  
+│ │ │ └── TrackerList.jsx  
+│ │ ├── lib  
+│ │ │ └── api.js  
+│ │ ├── main.jsx  
+│ │ └── styles.css  
+│ └── vite.config.js  
+└── README.md
 ```
 
 ## Docker Setup (Recommended)
