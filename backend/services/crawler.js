@@ -583,7 +583,13 @@ export async function crawlWebsite(rawUrl) {
   assertNotPrivate(hostname, dnsResult.address);
 
   // ── Browser setup ─────────────────────────────────────────────────────────
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    // In Docker, use system Chromium to avoid runtime downloads.
+    // Passing executablePath directly is the most reliable approach —
+    // works regardless of Playwright version or env var naming differences.
+    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+  });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     serviceWorkers: 'block',

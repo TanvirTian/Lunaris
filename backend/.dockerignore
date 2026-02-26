@@ -1,0 +1,28 @@
+# Reinstalled during build — never copy in
+node_modules
+
+# Secrets must come from runtime env, never baked into image
+.env
+.env.*
+!.env.example
+
+# Not needed at runtime
+.git
+.gitignore
+*.log
+logs/
+
+# Dev tooling
+*.test.js
+*.spec.js
+__tests__/
+coverage/
+
+# Docker files don't need to be in their own build context
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# OS artifacts
+.DS_Store
+Thumbs.db

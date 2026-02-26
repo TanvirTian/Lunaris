@@ -1,36 +1,67 @@
 # Dependencies
 node_modules/
+backend/node_modules/
+frontend/node_modules/
 
-# Environment Secrets
+.pnpm-store/
+package-lock.json
+
+
 .env
-.env.example
+.env.local
+.env.*.local
+
 backend/.env
-backend/.env.example
+backend/.env.local
+
+
 frontend/.env
+frontend/.env.local
+
+
 
 # Prisma
 backend/prisma/*.db
 backend/prisma/*.db-journal
 
-# Keep migration history but avoid temp artifacts
+# Temporary Prisma artifacts
 backend/prisma/migrations/*/*.tmp
 
-# Logs
+# Prisma runtime client (safe to ignore)
+backend/node_modules/.prisma/
+
+
+# Logs + Runtime Output
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Playwright / Testing Artifacts
+
+# Playwright + Crawler Artifacts
 backend/.cache/
 backend/playwright-report/
 backend/test-results/
 backend/storage/
 
+# Playwright browser cache
+backend/.local-browsers/
+backend/.playwright/
+
+
 # Build Outputs
 frontend/dist/
 frontend/.vite/
 backend/dist/
+
+
+
+# Docker + Infrastructure
+docker-compose.override.yml
+.docker/
+*.tar
+*.tar.gz
+
 
 # OS Files
 .DS_Store
@@ -39,15 +70,27 @@ Thumbs.db
 # IDE Configs
 .vscode/
 .idea/
+*.sublime-workspace
+*.sublime-project
+
 
 # Temporary Files
 *.tmp
 *.swp
 *.swo
+*~
+
+
 
 # Coverage Reports
 coverage/
 
-# Prisma Runtime Client (Optional)
-# Usually safe to ignore
-backend/node_modules/.prisma/
+
+# Debug + Runtime Dumps
+*.dump
+*.stackdump
+
+
+# Optional Production CI Artifacts
+build/
+out/
