@@ -30,42 +30,49 @@ Scans are processed asynchronously. The API returns a job ID immediately and the
 ## Architecture
 
 ```
-Browser
-  │
-  ▼
+User submits URL
+       │
+       ▼
 ┌─────────────────────────────┐
-│   lunaris-frontend          │  ← nginx serves React app + proxies API calls
-│   nginx:alpine · port 3000  │    browser never talks to backend directly
+│        API Layer            │  ← URL validation, SSRF protection, DNS resolution
+│        Fastify              │    deduplication check, rate limiting
 └────────────┬────────────────┘
-             │ proxy_pass (internal Docker network)
+             │ job created (PENDING) written to PostgreSQL
+             │ enqueued to BullMQ
+             │ jobId returned immediately (HTTP 202)
              ▼
 ┌─────────────────────────────┐
-│   lunaris-backend           │  ← Fastify API: validates URL, deduplicates,
-│   node:20-slim · port 8000  │    creates ScanJob, enqueues to BullMQ
-│   Rate limiting · SSRF      │    returns jobId in <100ms (HTTP 202)
+│       Queue Layer           │  ← BullMQ + Redis
+│                             │    persistent job storage, retry logic (3x backoff)
+│                             │    concurrency control, dead letter queue
 └────────────┬────────────────┘
-             │ enqueue job
+             │ worker picks up job
              ▼
 ┌─────────────────────────────┐
-│   lunaris-redis             │  ← BullMQ queue storage, retry state
-│   redis:7-alpine            │    transient — not the source of truth
+│      Worker Layer           │  ← job marked RUNNING
+│                             │    Playwright launches headless Chromium
+│   Crawl Engine              │    crawls homepage + up to 3 sub-pages
+│   Playwright                │    intercepts all network requests
+│        │                    │    extracts cookies, scripts, storage
+│        ▼                    │
+│   Analysis Pipeline         │    tracker detection
+│                             │    cookie classification
+│   analyzer.js               │    fingerprinting detection (canvas, WebGL, font)
+│   cookieAnalysis.js         │    script intelligence + obfuscation detection
+│   scriptIntelligence.js     │    ownership graph (domain to corporation)
+│   ownershipGraph.js         │    dark pattern signals
+│        │                    │
+│        ▼ privacy score 0-100│
 └────────────┬────────────────┘
-             │ dequeue job
+             │ atomic transaction
              ▼
 ┌─────────────────────────────┐
-│   lunaris-worker            │  ← Playwright crawl → analysis → score
-│   node:20-slim (same image) │    concurrency capped at WORKER_CONCURRENCY
-│   RAM: 1.5GB · CPU: 1.5     │    retries 3× with exponential backoff
-└────────────┬────────────────┘
-             │ persist result (atomic transaction)
-             ▼
-┌─────────────────────────────┐
-│   lunaris-postgres          │  ← ScanJob + ScanResult — permanent source of truth
-│   postgres:16-alpine        │    JSONB for raw crawl data, typed cols for analytics
+│     Persistence Layer       │  ← ScanJob updated to SUCCESS
+│     PostgreSQL + Prisma     │    ScanResult created with typed columns + rawData JSONB
 └─────────────────────────────┘
              │
              ▼
-Browser polls GET /scan/:id → receives result
+Client polls GET /scan/:id and receives full result
 
 ```
 
