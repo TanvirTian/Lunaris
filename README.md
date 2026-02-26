@@ -29,41 +29,53 @@ Scans are processed asynchronously. The API returns a job ID immediately and the
 ## Architecture
 
 ```
-Client
+Browser
   │
   ▼
 ┌─────────────────────────────┐
-│       Fastify API           │  ← validates URL, deduplicates, returns jobId (202)
-│   Rate limiting · SSRF      │
+│   lunaris-frontend          │  ← nginx serves React app + proxies API calls
+│   nginx:alpine · port 3000  │    browser never talks to backend directly
 └────────────┬────────────────┘
-             │ enqueue
+             │ proxy_pass (internal Docker network)
              ▼
 ┌─────────────────────────────┐
-│     Redis + BullMQ          │  ← persistent job queue, retry logic, DLQ
+│   lunaris-backend           │  ← Fastify API: validates URL, deduplicates,
+│   node:20-slim · port 8000  │    creates ScanJob, enqueues to BullMQ
+│   Rate limiting · SSRF      │    returns jobId in <100ms (HTTP 202)
 └────────────┬────────────────┘
-             │ dequeue
+             │ enqueue job
              ▼
 ┌─────────────────────────────┐
-│        Worker               │  ← Playwright crawl → analysis → score
-│   Concurrency controlled    │
+│   lunaris-redis             │  ← BullMQ queue storage, retry state
+│   redis:7-alpine            │    transient — not the source of truth
 └────────────┬────────────────┘
-             │ persist
+             │ dequeue job
              ▼
 ┌─────────────────────────────┐
-│       PostgreSQL            │  ← ScanJob + ScanResult, source of truth
+│   lunaris-worker            │  ← Playwright crawl → analysis → score
+│   node:20-slim (same image) │    concurrency capped at WORKER_CONCURRENCY
+│   RAM: 1.5GB · CPU: 1.5     │    retries 3× with exponential backoff
+└────────────┬────────────────┘
+             │ persist result (atomic transaction)
+             ▼
+┌─────────────────────────────┐
+│   lunaris-postgres          │  ← ScanJob + ScanResult — permanent source of truth
+│   postgres:16-alpine        │    JSONB for raw crawl data, typed cols for analytics
 └─────────────────────────────┘
              │
              ▼
-Client polls GET /scan/:id → receives result
+Browser polls GET /scan/:id → receives result
+
 ```
 
 **Key design decisions:**
 
-- API layer never touches Playwright — returns in <100ms regardless of crawl time
-- Redis holds transient queue state. PostgreSQL holds all permanent data
-- Single Docker image runs as both API server and worker (different commands)
-- DNS pre-resolution + private IP blocking before any browser is launched
-- Atomic DB transactions — no SUCCESS job without a result, no orphaned records
+-   Backend never touches Playwright — returns in <100ms regardless of crawl time
+-   nginx proxies all API calls internally — browser stays on one origin, no CORS needed
+-   Backend and worker share one Docker image, run different commands
+-   DNS pre-resolution + private IP blocking before any browser is launched
+-   Atomic DB transactions — no SUCCESS job without a result, no orphaned records
+-   Database migrations run automatically on every backend container startup
 
 
 ## Tech Stack
@@ -78,40 +90,149 @@ Client polls GET /scan/:id → receives result
 | Frontend | React 18 + Vite | UI, result polling |
 
 
-# Project Structure
+## Project Structure
+
 ```
 .
-├── backend
+├── docker-compose.yml         
+├── docker-compose.dev.yml       
+├── .env                        
+├── .env.example
+│
+├── backend/
+│   ├── Dockerfile              
+│   ├── .env                    
+│   ├── .env.example
+│   ├── server.js               
+│   ├── worker.js               
 │   ├── lib/
-│   │   ├── db.js
-│   │   ├── logger.js
-│   │   ├── metrics.js
-│   │   ├── queue.js
-│   │   ├── redis.js
-│   ├── prisma/
-│   │   ├── migrations/
-│   │   └── schema.prisma
+│   │   ├── db.js               
+│   │   ├── queue.js            
+│   │   ├── redis.js            
+│   │   ├── logger.js           
+│   │   └── metrics.js          
 │   ├── routes/
-│   │   ├── analyze.js
-│   │   ├── health.js
-│   │   └── scan.js
+│   │   ├── analyze.js          
+│   │   ├── scan.js             
+│   │   └── health.js           
 │   ├── services/
-│   │   ├── analyzer.js
-│   │   ├── cookieAnalysis.js
-│   │   ├── crawler.js
-│   │   ├── ownershipGraph.js
+│   │   ├── crawler.js          
+│   │   ├── analyzer.js         
+│   │   ├── cookieAnalysis.js   
+│   │   ├── ownershipGraph.js   
 │   │   └── scriptIntelligence.js
-│   ├── worker.js
-│   └── server.js
-├── frontend
-│   ├── src/
-│   │   ├── components/
-│   │   ├── lib/api.js
-│   │   ├── App.jsx
-│   │   └── main.jsx
-│   └── vite.config.js
-└── README.md
+│   └── prisma/
+│       ├── schema.prisma
+│       └── migrations/
+│
+└── frontend/
+    ├── Dockerfile              
+    ├── Dockerfile.dev          
+    ├── nginx.conf              
+    ├── .env                    
+    └── src/
+        ├── App.jsx
+        ├── lib/api.js          
+        └── components/
+
 ```
+
+## Docker Setup (Recommended)
+
+### Quick start
+
+```bash
+# 1. Clone repository
+git clone https://github.com/TanvirTian/Lunaris
+cd Lunaris
+
+# 2. Create root environment file (Docker Compose configuration)
+cp .env.example .env
+# Set POSTGRES_PASSWORD to match backend/.env
+
+# 3. Configure backend runtime environment
+cp backend/.env.example backend/.env
+
+# 4. Build and start all services
+docker compose up -d --build
+
+# 5. Verify services are running
+docker compose ps
+
+# 6. Test API health
+curl http://localhost:8000/health
+
+```
+
+Open `http://localhost:3000`
+
+
+### Common commands
+
+```bash
+# View all container statuses
+docker compose ps
+
+# Follow logs for a specific container
+docker compose logs -f backend
+docker compose logs -f worker
+docker compose logs -f frontend
+
+# Restart a single container (e.g. after config change)
+docker compose restart backend
+
+# Rebuild after source code changes
+docker compose up -d --build
+
+# Stop all containers (data is preserved in volumes)
+docker compose down
+
+# Stop and DELETE all data (volumes wiped)
+docker compose down -v
+
+# Open a shell inside a container
+docker exec -it lunaris-backend sh
+docker exec -it lunaris-postgres psql -U postgres -d privacy_analyzer
+
+```
+
+### Development mode (hot reload)
+
+For active development — mounts your local source into containers, restarts Node on file changes:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+```
+
+Add an alias to `~/.bashrc` for convenience:
+
+```bash
+alias dcdev="docker compose -f docker-compose.yml -f docker-compose.dev.yml"
+# then just:
+dcdev up
+
+```
+
+In dev mode:
+
+-   Backend and worker use `node --watch` — restart automatically on `.js` file saves
+-   Frontend uses Vite dev server with full HMR — browser updates without page reload
+-   Source code is volume-mounted — no rebuild needed for code changes
+-   Only rebuild when `package.json` or `Dockerfile` changes
+
+### Data persistence
+
+Both database volumes persist across restarts:
+
+```yaml
+volumes:
+  postgres_data:   # all scan jobs, results, history
+  redis_data:      # queue state snapshot (every 60s)
+
+```
+
+`docker compose down` keeps your data. `docker compose down -v` deletes it permanently.
 
 ## Local Development 
 
