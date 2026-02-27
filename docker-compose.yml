@@ -1,54 +1,72 @@
+# Lunaris — Local Development
+
+# Runs the full stack on your machine with live reload on every file save.
+#
+# Frontend  → http://localhost:3000  (Vite HMR — browser updates instantly)
+# Backend   → http://localhost:8000  (node --watch — restarts on .js changes)
+# Postgres  → localhost:5432         (exposed so you can connect with TablePlus etc)
+# Redis     → localhost:6379         (exposed for redis-cli / RedisInsight)
+#
+# Start:    docker compose up --build
+# Stop:     docker compose down
+# Nuke DB:  docker compose down -v
+
+
 services:
 
   postgres:
-    container_name: lunaris-postgres
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER:     ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB:       ${POSTGRES_DB:-privacy_analyzer}
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB:       lunaris
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-privacy_analyzer}"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lunaris"]
       interval: 5s
       timeout: 5s
       retries: 10
-      start_period: 10s
-    ports:
-      - "5432:5432"
 
   redis:
-    container_name: lunaris-redis
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --save 60 1 --loglevel warning
     volumes:
       - redis_data:/data
+    ports:
+      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
-      start_period: 5s
 
   backend:
-    container_name: lunaris-backend
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        npx prisma migrate deploy && node server.js
-    env_file: ./backend/.env
+    # Run migrations then start the server with --watch so any .js file
+    # change you make on your host restarts the process automatically
+    command: >
+      sh -c "npx prisma generate && npx prisma migrate deploy && node --watch server.js"
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-privacy_analyzer}
-      REDIS_URL: redis://redis:6379
-      NODE_ENV: production
-      PORT: 8000
+      DATABASE_URL:      postgresql://postgres:postgres@postgres:5432/lunaris
+      REDIS_URL:         redis://redis:6379
+      PORT:              8000
+      NODE_ENV:          development
+      LOG_LEVEL:         info
+      CORS_ORIGIN:       http://localhost:3000
+      WORKER_CONCURRENCY: 2
+    volumes:
+      # Your source code → live inside the container immediately on save
+      - ./backend:/app
+      # Protect the container's node_modules from being overwritten by the
+      # host mount above (host likely has no node_modules, or different ones)
+      - /app/node_modules
     ports:
       - "8000:8000"
     depends_on:
@@ -56,61 +74,55 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8000/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))\""]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
+
+  # Background Worker
+  # Shares the same image and source mount as backend.
+  # Runs worker.js which picks jobs off the BullMQ queue.
 
   worker:
-    container_name: lunaris-worker
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["node", "worker.js"]
-    env_file: ./backend/.env
+    command: >
+      sh -c "npx prisma generate && node --watch worker.js"
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-privacy_analyzer}
-      REDIS_URL: redis://redis:6379
-      NODE_ENV: production
-      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      DATABASE_URL:      postgresql://postgres:postgres@postgres:5432/lunaris
+      REDIS_URL:         redis://redis:6379
+      NODE_ENV:          development
+      LOG_LEVEL:         info
+      WORKER_CONCURRENCY: 2
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       backend:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 1536M
-          cpus: '1.5'
-        reservations:
-          memory: 512M
+        condition: service_started
+
+  # Frontend
 
   frontend:
-    container_name: lunaris-frontend
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      args:
-        VITE_API_URL: ""
-        VITE_APP_NAME: "Lunaris"
     restart: unless-stopped
+    environment:
+      # Tells vite.config.js which host to proxy API calls to.
+      # 'backend' is the Docker service name above — Docker DNS resolves it
+      # automatically. Do NOT use localhost here — inside the frontend container
+      # localhost means the frontend container itself, not the backend.
+      VITE_BACKEND_URL: http://backend:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     ports:
       - "3000:3000"
     depends_on:
-      backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 > /dev/null 2>&1 || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+      - backend
 
 volumes:
   postgres_data:

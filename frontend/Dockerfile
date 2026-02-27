@@ -1,42 +1,20 @@
-# =============================================================================
-# Stage 1: build
-# Installs deps and runs vite build → outputs static files to /app/dist
-# =============================================================================
-FROM node:20-slim AS builder
+# Frontend — Local Development
+# Runs Vite dev server with HMR. Source is volume-mounted from host
+# so any file you save in frontend/src/ updates the browser instantly.
+FROM node:20-slim
 
 WORKDIR /app
 
+# Install dependencies
+# Cached layer — only re-runs when package.json changes
 COPY package.json package-lock.json ./
 RUN npm ci
 
+# Copy source — immediately overridden by the volume mount in docker-compose.yml
 COPY . .
-
-# VITE_API_URL must be set at BUILD TIME — Vite bakes it into the JS bundle.
-# It cannot be changed at runtime without rebuilding.
-# In docker-compose we pass it as a build arg → env var.
-ARG VITE_API_URL
-ARG VITE_APP_NAME=Lunaris
-ENV VITE_API_URL=$VITE_API_URL
-ENV VITE_APP_NAME=$VITE_APP_NAME
-
-RUN npm run build
-
-# =============================================================================
-# Stage 2: serve
-# Minimal nginx image — serves the static dist/ files.
-# Final image has zero Node.js, zero npm, zero source code.
-# =============================================================================
-FROM nginx:alpine AS runtime
-
-# Remove default nginx config
-RUN rm /etc/nginx/conf.d/default.conf
-
-# Our config: serve static files + proxy /api requests to backend
-COPY nginx.conf /etc/nginx/conf.d/app.conf
-
-# Copy built static files from builder stage
-COPY --from=builder /app/dist /usr/share/nginx/html
 
 EXPOSE 3000
 
-CMD ["nginx", "-g", "daemon off;"]
+# --host 0.0.0.0 is required — without it Vite only listens on 127.0.0.1
+# inside the container, and Docker's port mapping can't reach it
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
