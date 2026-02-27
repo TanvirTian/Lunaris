@@ -130,13 +130,10 @@ Client polls GET /scan/:id and receives full result
 │ │ ├── ownershipGraph.js  
 │ │ └── scriptIntelligence.js  
 │ └── worker.js  
-├── docker-compose.dev.yml  
 ├── docker-compose.yml  
 ├── frontend  
 │ ├── Dockerfile  
-│ ├── Dockerfile.dev  
 │ ├── index.html  
-│ ├── nginx.conf  
 │ ├── package.json  
 │ ├── package-lock.json  
 │ ├── src  
@@ -162,100 +159,138 @@ Client polls GET /scan/:id and receives full result
 
 ## Docker Setup (Recommended)
 
-### Quick start
+Lunaris runs entirely via Docker Compose.
+No local Node.js, PostgreSQL, or Redis installation is required.
+
+All runtime configuration is defined directly in `docker-compose.yml`. No `.env` files are needed.
+
+### Quick Start
 
 ```bash
 # 1. Clone repository
 git clone https://github.com/TanvirTian/Lunaris
 cd Lunaris
 
-# 2. Create root environment file (Docker Compose configuration)
-cp .env.example .env
-# Set POSTGRES_PASSWORD to match backend/.env
-
-# 3. Configure backend runtime environment
-cp backend/.env.example backend/.env
-
-# 4. Build and start all services
-docker compose up -d --build
-
-# 5. Verify services are running
-docker compose ps
-
-# 6. Test API health
-curl http://localhost:8000/health
-
+# 2. Build and start full stack
+docker compose up --build
 ```
 
-Open `http://localhost:3000`
+Services will start in dependency order:
+
+* PostgreSQL (with healthcheck)
+* Redis
+* Backend (runs migrations automatically)
+* Worker
+* Frontend (Vite dev server)
 
 
-### Common commands
+
+### Access Points
+
+| Service     | URL                                            |
+| ----------- | ---------------------------------------------- |
+| Frontend    | [http://localhost:3000](http://localhost:3000) |
+| Backend API | [http://localhost:8000](http://localhost:8000) |
+| PostgreSQL  | localhost:5432                                 |
+| Redis       | localhost:6379                                 |
+
+Test API health:
 
 ```bash
-# View all container statuses
+curl http://localhost:8000/health
+```
+
+
+### Development Workflow (Hot Reload Enabled)
+
+This setup is already development-optimized:
+
+* Backend and worker restart automatically on `.js` file changes
+* Frontend uses Vite HMR (instant browser updates)
+* Source code is bind-mounted into containers
+* `node_modules` is container-managed and isolated from host
+
+You only need to rebuild when:
+
+* `package.json` changes
+* `Dockerfile` changes
+* Native dependencies are added
+
+Rebuild command:
+
+```bash
+docker compose up --build
+```
+
+---
+
+### Logs & Debugging
+
+```bash
+# Show container status
 docker compose ps
 
-# Follow logs for a specific container
+# Follow logs
 docker compose logs -f backend
 docker compose logs -f worker
 docker compose logs -f frontend
+docker compose logs -f postgres
+```
 
-# Restart a single container (e.g. after config change)
-docker compose restart backend
+---
 
-# Rebuild after source code changes
-docker compose up -d --build
+### Stop Containers
 
-# Stop all containers (data is preserved in volumes)
+```bash
 docker compose down
+```
 
-# Stop and DELETE all data (volumes wiped)
+Data persists in Docker volumes.
+
+
+### Reset Database (Full Wipe)
+
+```bash
 docker compose down -v
-
-# Open a shell inside a container
-docker exec -it lunaris-backend sh
-docker exec -it lunaris-postgres psql -U postgres -d privacy_analyzer
-
+docker compose up --build
 ```
 
-### Development mode (hot reload)
+This deletes:
 
-For active development — mounts your local source into containers, restarts Node on file changes:
+* `postgres_data`
+* `redis_data`
+
+Use this when changing database credentials or schema state.
+
+
+
+### Access Containers
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Backend shell
+docker exec -it lunaris-backend-1 sh
 
+# Postgres shell
+docker exec -it lunaris-postgres-1 psql -U postgres -d lunaris
 ```
 
-Add an alias to `~/.bashrc` for convenience:
+---
 
-```bash
-alias dcdev="docker compose -f docker-compose.yml -f docker-compose.dev.yml"
-# then just:
-dcdev up
+### Data Persistence
 
-```
-
-In dev mode:
-
--   Backend and worker use `node --watch` — restart automatically on `.js` file saves
--   Frontend uses Vite dev server with full HMR — browser updates without page reload
--   Source code is volume-mounted — no rebuild needed for code changes
--   Only rebuild when `package.json` or `Dockerfile` changes
-
-### Data persistence
-
-Both database volumes persist across restarts:
+Volumes defined:
 
 ```yaml
 volumes:
-  postgres_data:   # all scan jobs, results, history
-  redis_data:      # queue state snapshot (every 60s)
-
+  postgres_data:
+  redis_data:
 ```
 
-`docker compose down` keeps your data. `docker compose down -v` deletes it permanently.
+* Scan jobs and results persist across restarts
+* Queue state persists (Redis snapshot)
+* Only `down -v` deletes data
+
+
 
 ## Local Development 
 
@@ -371,4 +406,5 @@ The architecture supports horizontal scaling without code changes:
 
 
 Built as a production system design study in asynchronous processing, browser automation, and privacy analysis.
+
 
