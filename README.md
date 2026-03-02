@@ -10,6 +10,8 @@ Lunaris scans any public URL and surfaces trackers, cookies, fingerprinting vect
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://postgresql.org)
 [![Prisma](https://img.shields.io/badge/Prisma-ORM-2D3748?style=flat-square&logo=prisma&logoColor=white)](https://prisma.io)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io)
+[![Prometheus](https://img.shields.io/badge/Prometheus-2.51-E6522C?style=flat-square&logo=prometheus&logoColor=white)](https://prometheus.io)
+[![Grafana](https://img.shields.io/badge/Grafana-10.4-F46800?style=flat-square&logo=grafana&logoColor=white)](https://grafana.com)
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
 
 
@@ -100,7 +102,6 @@ Client polls GET /scan/:id and receives full result
 
 ## Project Structure
 ```
-.  
 ├── backend  
 │ ├── DB_SETUP.md  
 │ ├── Dockerfile  
@@ -110,11 +111,14 @@ Client polls GET /scan/:id and receives full result
 │ │ ├── metrics.js  
 │ │ ├── queue.js  
 │ │ └── redis.js  
+│ ├── node_modules  
 │ ├── package.json  
 │ ├── package-lock.json  
 │ ├── prisma  
 │ │ ├── migrations  
 │ │ │ ├── 20260223184806_init  
+│ │ │ │ └── migration.sql  
+│ │ │ ├── 20260302200744_add_domain_scans  
 │ │ │ │ └── migration.sql  
 │ │ │ └── migration_lock.toml  
 │ │ └── schema.prisma  
@@ -133,7 +137,7 @@ Client polls GET /scan/:id and receives full result
 ├── docker-compose.yml  
 ├── frontend  
 │ ├── Dockerfile  
-│ ├── index.html  
+│ ├── index.html    
 │ ├── package.json  
 │ ├── package-lock.json  
 │ ├── src  
@@ -154,8 +158,19 @@ Client polls GET /scan/:id and receives full result
 │ │ ├── main.jsx  
 │ │ └── styles.css  
 │ └── vite.config.js  
-└── README.md
-```
+├── migration_add_domain_scans.sql  
+├── monitoring  
+│ ├── grafana  
+│ │ ├── dashboards  
+│ │ │ └── grafana_dashboard.json  
+│ │ └── provisioning  
+│ │ ├── dashboards  
+│ │ │ └── dashboard.yml  
+│ │ └── datasources  
+│ │ └── datasource.yml  
+│ └── prometheus.yml  
+└── README.md  
+  ```
 
 ## Docker Setup (Recommended)
 
@@ -187,12 +202,16 @@ Services will start in dependency order:
 
 ### Access Points
 
-| Service     | URL                                            |
-| ----------- | ---------------------------------------------- |
-| Frontend    | [http://localhost:3000](http://localhost:3000) |
-| Backend API | [http://localhost:8000](http://localhost:8000) |
-| PostgreSQL  | localhost:5432                                 |
-| Redis       | localhost:6379                                 |
+| Service    | URL                       |
+|------------|---------------------------|
+| Frontend   | http://localhost:3000     |
+| Backend    | http://localhost:8000     |
+| Prisma UI  | http://localhost:5555     |
+| Prometheus | http://localhost:9090     |
+| Grafana    | http://localhost:3001     |
+| Metrics    | http://localhost:8000/metrics |
+
+Grafana credentials (local dev only): `admin` / `admin`
 
 Test API health:
 
@@ -406,5 +425,6 @@ The architecture supports horizontal scaling without code changes:
 
 
 Built as a production system design study in asynchronous processing, browser automation, and privacy analysis.
+
 
 
