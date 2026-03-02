@@ -1,5 +1,17 @@
 // =============================================================================
-// Prisma Schema — Privacy Analyzer
+// Prisma Schema — Privacy Analyzer (v2)
+//
+// Architecture: Event-log + State-Registry hybrid
+//
+//   ScanJob    — immutable event log of crawl intents and outcomes
+//   ScanResult — full analysis payload linked to a specific job run
+//   DomainScan — single-row-per-domain state registry; the cache layer
+//
+// Why two result tables?
+//   ScanJob/ScanResult give you a full audit trail (history, retries, failures).
+//   DomainScan gives you O(1) cache lookups by domain without scanning history.
+//   Separating concerns avoids a slow "find latest successful job per domain"
+//   query and eliminates duplicate domain rows entirely.
 // =============================================================================
 
 generator client {
@@ -32,7 +44,6 @@ enum RiskLevel {
 // =============================================================================
 // User
 // Stub model - userId is nullable on ScanJob so the app works without auth.
-// Adding auth later requires zero schema changes to ScanJob or ScanResult.
 // =============================================================================
 
 model User {
@@ -50,13 +61,10 @@ model User {
 // ScanJob
 //
 // Represents the intent to scan a URL and the lifecycle of that operation.
-// Deliberately separated from ScanResult because:
-//
-//   1. A job can FAIL - there may never be a result
-//   2. A job can be RETRIED - same job, new result attempt
-//   3. Status polling (GET /scan/:id) works independently of result existence
-//   4. Queue systems (BullMQ etc.) operate on jobs, not results
-//   5. You can track cost, duration, error rates per job in analytics
+// Deliberately separated from results:
+//   1. A job can FAIL — there may never be a result
+//   2. Retries create new job entries for accurate audit trails
+//   3. Queue systems (BullMQ) operate on jobs, not results
 // =============================================================================
 
 model ScanJob {
@@ -70,7 +78,7 @@ model ScanJob {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  user         User?      @relation(fields: [userId], references: [id])
+  user         User?       @relation(fields: [userId], references: [id])
   result       ScanResult?
 
   @@index([targetUrl])
@@ -85,13 +93,9 @@ model ScanJob {
 // =============================================================================
 // ScanResult
 //
-// Stores analysis output. Only exists when job.status = SUCCESS.
-// One-to-one with ScanJob enforced by @unique on scanJobId.
-//
-// Typed columns + rawData JSONB:
-//   Typed columns enable SQL aggregations and indexed queries.
-//   rawData (JSONB) stores the complete blob - nothing is ever lost,
-//   and no migration is needed when the analyzer adds new signals.
+// Stores the full analysis output for a specific job run.
+// Only exists when job.status = SUCCESS.
+// Preserved for historical analysis and score trending over time.
 // =============================================================================
 
 model ScanResult {
@@ -126,4 +130,73 @@ model ScanResult {
   @@index([keylogger])
 
   @@map("scan_results")
+}
+
+// =============================================================================
+// DomainScan  ← NEW
+//
+// One row per unique domain. Acts as the 24-hour cache layer.
+//
+// Why a separate model instead of querying ScanJob history?
+//   "Find the latest successful scan for domain X within 24h" requires:
+//     - String prefix matching on targetUrl
+//     - Joining ScanJob → ScanResult
+//     - Ordering + filtering by completedAt
+//   That's 3 predicates, a join, and an index scan — every cache check.
+//
+//   DomainScan.findUnique({ where: { domain } }) is a single primary-key
+//   lookup — O(1) regardless of scan history volume.
+//
+// Upsert semantics:
+//   - Worker calls db.domainScan.upsert({ where: { domain }, ... })
+//   - Creates on first scan, updates on every subsequent scan
+//   - @unique on domain enforces exactly one row per domain at DB level
+//   - No application-level dedup logic required
+//
+// lastJobId:
+//   Soft FK to the ScanJob that produced the current data.
+//   Not a hard Prisma relation to avoid cascade complications when jobs
+//   are deleted — domain scan history should outlive individual job records.
+// =============================================================================
+
+model DomainScan {
+  id     String @id @default(uuid()) @db.Uuid
+  domain String @unique  // e.g. "example.com" — normalized, no protocol
+
+  // Reference to the most recent job that produced this data
+  // Stored as plain String (not a Prisma relation) to survive job deletion
+  lastJobId String? @db.Uuid
+
+  // Mirrors ScanResult typed columns for fast filtered queries
+  score             Int
+  riskLevel         RiskLevel
+  summary           String
+  trackerCount      Int     @default(0)
+  cookieCount       Int     @default(0)
+  externalDomains   Int     @default(0)
+  isHttps           Boolean @default(false)
+  pagesCrawled      Int     @default(1)
+  hasCsp            Boolean @default(false)
+  canvasFingerprint Boolean @default(false)
+  webglFingerprint  Boolean @default(false)
+  fontFingerprint   Boolean @default(false)
+  keylogger         Boolean @default(false)
+
+  // Full analysis blob — identical to ScanResult.rawData
+  rawData Json
+
+  // When this domain was last successfully scanned
+  // Used for the 24-hour cache window comparison
+  lastScannedAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Index on lastScannedAt enables fast "is cache stale?" queries
+  // if you ever need to batch-expire or report on stale domains
+  @@index([lastScannedAt(sort: Desc)])
+  @@index([riskLevel])
+  @@index([score])
+
+  @@map("domain_scans")
 }

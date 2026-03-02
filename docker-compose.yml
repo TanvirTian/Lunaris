@@ -1,16 +1,17 @@
 # Lunaris — Local Development
-
-# Runs the full stack on your machine with live reload on every file save.
 #
-# Frontend  → http://localhost:3000  (Vite HMR — browser updates instantly)
-# Backend   → http://localhost:8000  (node --watch — restarts on .js changes)
-# Postgres  → localhost:5432         (exposed so you can connect with TablePlus etc)
-# Redis     → localhost:6379         (exposed for redis-cli / RedisInsight)
+# Service map:
+#   Frontend    → http://localhost:3000
+#   Backend     → http://localhost:8000
+#   Prisma      → http://localhost:5555
+#   Postgres    → localhost:5432
+#   Redis       → localhost:6379
+#   Prometheus  → http://localhost:9090
+#   Grafana     → http://localhost:3001  (admin / admin — LOCAL DEV ONLY)
 #
-# Start:    docker compose up --build
-# Stop:     docker compose down
-# Nuke DB:  docker compose down -v
-
+# Start:  docker compose up --build
+# Stop:   docker compose down
+# Nuke:   docker compose down -v
 
 services:
 
@@ -18,9 +19,9 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER:     postgres
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB:       lunaris
+      POSTGRES_DB: lunaris
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -30,6 +31,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - lunaris
 
   redis:
     image: redis:7-alpine
@@ -43,29 +46,28 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - lunaris
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    # Run migrations then start the server with --watch so any .js file
-    # change you make on your host restarts the process automatically
     command: >
-      sh -c "npx prisma generate && npx prisma migrate deploy && node --watch server.js"
+      sh -c "npx prisma generate &&
+             npx prisma migrate deploy &&
+             node --watch server.js"
     environment:
-      DATABASE_URL:      postgresql://postgres:postgres@postgres:5432/lunaris
-      REDIS_URL:         redis://redis:6379
-      PORT:              8000
-      NODE_ENV:          development
-      LOG_LEVEL:         info
-      CORS_ORIGIN:       http://localhost:3000
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/lunaris
+      REDIS_URL: redis://redis:6379
+      PORT: 8000
+      NODE_ENV: development
+      LOG_LEVEL: info
+      CORS_ORIGIN: http://localhost:3000
       WORKER_CONCURRENCY: 2
     volumes:
-      # Your source code → live inside the container immediately on save
       - ./backend:/app
-      # Protect the container's node_modules from being overwritten by the
-      # host mount above (host likely has no node_modules, or different ones)
       - /app/node_modules
     ports:
       - "8000:8000"
@@ -74,10 +76,27 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - lunaris
 
-  # Background Worker
-  # Shares the same image and source mount as backend.
-  # Runs worker.js which picks jobs off the BullMQ queue.
+  prisma-studio:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: npx prisma studio --port 5555 --hostname 0.0.0.0
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/lunaris
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    ports:
+      - "5555:5555"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - lunaris
 
   worker:
     build:
@@ -85,12 +104,13 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     command: >
-      sh -c "npx prisma generate && node --watch worker.js"
+      sh -c "npx prisma generate &&
+             node --watch worker.js"
     environment:
-      DATABASE_URL:      postgresql://postgres:postgres@postgres:5432/lunaris
-      REDIS_URL:         redis://redis:6379
-      NODE_ENV:          development
-      LOG_LEVEL:         info
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/lunaris
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: development
+      LOG_LEVEL: info
       WORKER_CONCURRENCY: 2
     volumes:
       - ./backend:/app
@@ -102,8 +122,8 @@ services:
         condition: service_healthy
       backend:
         condition: service_started
-
-  # Frontend
+    networks:
+      - lunaris
 
   frontend:
     build:
@@ -111,10 +131,6 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      # Tells vite.config.js which host to proxy API calls to.
-      # 'backend' is the Docker service name above — Docker DNS resolves it
-      # automatically. Do NOT use localhost here — inside the frontend container
-      # localhost means the frontend container itself, not the backend.
       VITE_BACKEND_URL: http://backend:8000
     volumes:
       - ./frontend:/app
@@ -123,7 +139,66 @@ services:
       - "3000:3000"
     depends_on:
       - backend
+    networks:
+      - lunaris
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - lunaris
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3001
+    volumes:
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks:
+      - lunaris
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+networks:
+  lunaris:
+    driver: bridge
 
 volumes:
   postgres_data:
   redis_data:
+  prometheus_data:
+  grafana_data:

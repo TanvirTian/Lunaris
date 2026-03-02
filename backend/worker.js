@@ -1,14 +1,33 @@
+/**
+ * BullMQ Scan Worker
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Processes scan jobs from the queue:
+ *   1. Crawl the website (Playwright)
+ *   2. Run privacy analysis
+ *   3. Persist ScanResult (append-only history)
+ *   4. Upsert DomainScan (single-row-per-domain state registry / cache)
+ *   5. Update ScanJob status
+ *
+ * The DomainScan upsert (step 4) is the key change from v1:
+ *   - On first scan for a domain: INSERT
+ *   - On re-scan: UPDATE in place
+ *   - @unique constraint on domain enforced at DB level
+ *   - No duplicate rows, no race conditions, no application-level dedup needed
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
 import { Worker } from 'bullmq';
 import { redis } from './lib/redis.js';
 import { db, disconnectDb } from './lib/db.js';
 import { dlq, QUEUE_NAME } from './lib/queue.js';
 import { logger } from './lib/logger.js';
-import { metrics } from './lib/metrics.js';
+import { metrics, activeScansGauge, scanDurationSeconds } from './lib/metrics.js';
 import { crawlWebsite } from './services/crawler.js';
 import { analyzePrivacy } from './services/analyzer.js';
 
 const WORKER_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || '2', 10);
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function scoreToRiskLevel(score) {
   if (score >= 80) return 'LOW';
@@ -17,6 +36,16 @@ function scoreToRiskLevel(score) {
   return 'HIGH';
 }
 
+/**
+ * Extract canonical domain from a URL for DomainScan keying.
+ * Must match the same logic in routes/analyze.js to ensure cache consistency.
+ */
+function extractDomain(url) {
+  const hostname = new URL(url).hostname;
+  return hostname.startsWith('www.') ? hostname.slice(4) : hostname;
+}
+
+// ── Job processor ─────────────────────────────────────────────────────────────
 
 async function processScanJob(job) {
   const { jobId, url } = job.data;
@@ -26,47 +55,88 @@ async function processScanJob(job) {
   metrics.increment('scans_started');
   metrics.startJobTimer(jobId);
 
-  // Update DB: PENDING → RUNNING
+  // PENDING → RUNNING
   await db.scanJob.update({
     where: { id: jobId },
     data:  { status: 'RUNNING', startedAt: new Date() },
   });
 
-  // Update BullMQ job progress (visible in Bull Board UI)
   await job.updateProgress(10);
 
-  //Crawl
+  // ── Crawl ─────────────────────────────────────────────────────────────────
   log.info('starting crawl');
   const crawlData = await crawlWebsite(url);
   await job.updateProgress(60);
   log.info({ pagesCrawled: crawlData.pagesCrawled?.length }, 'crawl complete');
 
-  //Analyze
+  // ── Analyze ───────────────────────────────────────────────────────────────
   log.info('starting analysis');
   const analysis = await analyzePrivacy(crawlData);
+  const riskLevel = scoreToRiskLevel(analysis.score);
   await job.updateProgress(90);
 
-  // Persist result (transaction) 
+  // Shared typed fields extracted once for both ScanResult and DomainScan writes.
+  // Keeping them in a single object avoids drift between the two records.
+  const resultFields = {
+    score:             analysis.score,
+    riskLevel,
+    summary:           analysis.summary,
+    trackerCount:      analysis.trackers?.length          ?? 0,
+    cookieCount:       analysis.meta?.cookieCount         ?? 0,
+    externalDomains:   analysis.meta?.externalDomainCount ?? 0,
+    isHttps:           analysis.meta?.isHttps             ?? false,
+    pagesCrawled:      analysis.meta?.pagesCrawled?.length ?? 1,
+    hasCsp:            analysis.meta?.csp?.present        ?? false,
+    canvasFingerprint: analysis.fingerprinting?.canvasFingerprint ?? false,
+    webglFingerprint:  analysis.fingerprinting?.webglFingerprint  ?? false,
+    fontFingerprint:   analysis.fingerprinting?.fontFingerprint   ?? false,
+    keylogger:         analysis.fingerprinting?.keylogger         ?? false,
+    rawData:           analysis,
+  };
+
+  const domain = extractDomain(url);
+
+  // ── Persist (transaction) ─────────────────────────────────────────────────
+  //
+  // Three operations in a single transaction:
+  //   1. ScanResult.create  — append a historical record of this run
+  //   2. DomainScan.upsert  — update the single-row domain cache
+  //   3. ScanJob.update     — mark job SUCCESS
+  //
+  // Why transaction?
+  //   If DomainScan.upsert succeeds but ScanJob.update fails, the next
+  //   cache check would return data tied to a job that still shows RUNNING.
+  //   The transaction ensures all three succeed or all three roll back.
+  //
+  // Why upsert for DomainScan?
+  //   Prisma's upsert maps to PostgreSQL's INSERT ... ON CONFLICT DO UPDATE.
+  //   It's atomic at the database level — no separate SELECT + conditional
+  //   INSERT/UPDATE needed, no TOCTOU race condition possible.
   await db.$transaction([
     db.scanResult.create({
       data: {
-        scanJobId:         jobId,
-        score:             analysis.score,
-        riskLevel:         scoreToRiskLevel(analysis.score),
-        summary:           analysis.summary,
-        trackerCount:      analysis.trackers?.length          ?? 0,
-        cookieCount:       analysis.meta?.cookieCount         ?? 0,
-        externalDomains:   analysis.meta?.externalDomainCount ?? 0,
-        isHttps:           analysis.meta?.isHttps             ?? false,
-        pagesCrawled:      analysis.meta?.pagesCrawled?.length ?? 1,
-        hasCsp:            analysis.meta?.csp?.present        ?? false,
-        canvasFingerprint: analysis.fingerprinting?.canvasFingerprint ?? false,
-        webglFingerprint:  analysis.fingerprinting?.webglFingerprint  ?? false,
-        fontFingerprint:   analysis.fingerprinting?.fontFingerprint   ?? false,
-        keylogger:         analysis.fingerprinting?.keylogger         ?? false,
-        rawData:           analysis,
+        scanJobId: jobId,
+        ...resultFields,
       },
     }),
+
+    db.domainScan.upsert({
+      where:  { domain },
+      create: {
+        domain,
+        lastJobId:     jobId,
+        lastScannedAt: new Date(),
+        ...resultFields,
+      },
+      update: {
+        lastJobId:     jobId,
+        lastScannedAt: new Date(),
+        // Update all result fields so the cache row always reflects
+        // the most recent scan, not the first one ever seen.
+        ...resultFields,
+      },
+    }),
+
     db.scanJob.update({
       where: { id: jobId },
       data:  { status: 'SUCCESS', completedAt: new Date() },
@@ -75,71 +145,66 @@ async function processScanJob(job) {
 
   await job.updateProgress(100);
 
-  const durationMs = metrics.endJobTimer(jobId);
+  const durationMs = metrics.endJobTimer(jobId, riskLevel.toLowerCase());
   metrics.increment('scans_succeeded');
-  log.info({ durationMs, score: analysis.score }, 'scan job completed');
 
-  return { score: analysis.score, durationMs };
+  log.info({ durationMs, score: analysis.score, domain, riskLevel }, 'scan job completed');
+
+  return { score: analysis.score, durationMs, domain };
 }
 
-// Worker instance
+// ── Worker instance ───────────────────────────────────────────────────────────
+
 export const scanWorker = new Worker(QUEUE_NAME, processScanJob, {
-  connection: redis,
-  concurrency: WORKER_CONCURRENCY,
-
-  // How long a job can run before BullMQ considers it stalled (ms)
-  // Set to slightly above your max expected crawl time
-  // If a job runs longer than this, it gets re-queued automatically
-  lockDuration: 120_000, // 2 minutes
-
-  // How often the worker renews its lock on active jobs (ms)
-  // Must be < lockDuration / 2
-  lockRenewTime: 30_000, // renew every 30s
-
-  // How often BullMQ checks for stalled jobs
+  connection:      redis,
+  concurrency:     WORKER_CONCURRENCY,
+  lockDuration:    120_000, // 2 minutes — max expected crawl time
+  lockRenewTime:   30_000,  // renew every 30s (must be < lockDuration / 2)
   stalledInterval: 30_000,
 });
 
-// Worker event handlers 
+// ── Worker event handlers ─────────────────────────────────────────────────────
+
 scanWorker.on('active', (job) => {
   logger.debug({ bullJobId: job.id, jobId: job.data.jobId }, 'worker picked up job');
+  activeScansGauge.inc();
 });
 
 scanWorker.on('completed', (job, result) => {
   logger.info({ bullJobId: job.id, jobId: job.data.jobId, ...result }, 'worker completed job');
+  activeScansGauge.dec();
 });
 
 scanWorker.on('failed', async (job, err) => {
-  const jobId = job?.data?.jobId;
+  const jobId       = job?.data?.jobId;
   const isLastAttempt = job?.attemptsMade >= (job?.opts?.attempts ?? 3);
 
   logger.error(
     { bullJobId: job?.id, jobId, attempt: job?.attemptsMade, error: err.message },
-    'worker job failed'
+    'worker job failed',
   );
 
+  // End the timer so the gauge doesn't leak upward on failures
   metrics.endJobTimer(jobId);
+  activeScansGauge.dec();
 
   if (isLastAttempt) {
-    // All retries exhausted — move to DLQ and mark job FAILED in DB
     metrics.increment('scans_failed');
     logger.warn({ jobId }, 'all retries exhausted — moving to DLQ');
 
-    // Add to DLQ for manual inspection
     await dlq.add('failed-scan', {
       originalJobId: job?.id,
       jobId,
-      url: job?.data?.url,
-      error: err.message,
-      attempts: job?.attemptsMade,
-      failedAt: new Date().toISOString(),
+      url:           job?.data?.url,
+      error:         err.message,
+      attempts:      job?.attemptsMade,
+      failedAt:      new Date().toISOString(),
     }).catch((dlqErr) => logger.error({ error: dlqErr.message }, 'failed to add to DLQ'));
 
-    // Mark FAILED in PostgreSQL
     if (jobId) {
       await db.scanJob.update({
         where: { id: jobId },
-        data: {
+        data:  {
           status:       'FAILED',
           errorMessage: err.message?.slice(0, 1000) ?? 'Unknown error',
           completedAt:  new Date(),
@@ -147,28 +212,28 @@ scanWorker.on('failed', async (job, err) => {
       }).catch((dbErr) => logger.error({ error: dbErr.message }, 'failed to update job status'));
     }
   }
-  // If not last attempt: BullMQ will retry automatically per backoff config
 });
 
 scanWorker.on('error', (err) => {
-  // Worker-level errors (Redis disconnect, etc.) — not job failures
   logger.error({ error: err.message }, 'worker error');
 });
 
 scanWorker.on('stalled', (jobId) => {
   logger.warn({ bullJobId: jobId }, 'job stalled — will be re-queued by BullMQ');
+  // Gauge correction: stalled jobs didn't fire 'failed', so decrement manually
+  activeScansGauge.dec();
 });
 
-// Graceful shutdown 
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+
 export async function shutdownWorker() {
   logger.info('shutting down worker...');
-  // close() waits for active jobs to finish before stopping
-  // Use closeGracefully() to wait for ALL currently active jobs
-  await scanWorker.close();
+  await scanWorker.close(); // waits for active jobs to finish
   logger.info('worker stopped');
 }
 
-// If running as standalone process (node worker.js)
+// ── Standalone process entry point ───────────────────────────────────────────
+
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   logger.info({ concurrency: WORKER_CONCURRENCY }, 'worker process started');
 

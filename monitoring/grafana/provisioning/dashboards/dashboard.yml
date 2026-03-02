@@ -1,0 +1,19 @@
+# Grafana dashboard provisioning
+# ─────────────────────────────────────────────────────────────────────────────
+# Grafana reads this on startup and loads all JSON files in the path.
+# Add new dashboard JSON files to monitoring/grafana/dashboards/ and
+# they will appear automatically on next Grafana start.
+
+apiVersion: 1
+
+providers:
+  - name:            'Lunaris Dashboards'
+    orgId:           1
+    folder:          'Lunaris'
+    folderUid:       'lunaris'
+    type:            file
+    disableDeletion: false          # allow deleting dashboards via UI
+    updateIntervalSeconds: 30       # re-read JSON files every 30s (hot reload)
+    allowUiUpdates:  true           # allow editing in UI (changes saved back to JSON)
+    options:
+      path: /etc/grafana/dashboards

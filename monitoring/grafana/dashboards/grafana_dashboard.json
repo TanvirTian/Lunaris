@@ -1,0 +1,93 @@
+{
+  "title": "Lunaris — Privacy Analyzer",
+  "uid": "lunaris-main",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "timezone": "browser",
+  "tags": ["lunaris", "privacy"],
+  "panels": [
+    {
+      "id": 1, "title": "Request Rate (req/s)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(lunaris_http_requests_total[1m])) by (route)", "legendFormat": "{{route}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "id": 2, "title": "Error Rate (%)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(rate(lunaris_http_requests_total{status_code=~\"5..\"}[1m])) / sum(rate(lunaris_http_requests_total[1m])) * 100", "legendFormat": "5xx %" },
+        { "expr": "sum(rate(lunaris_http_requests_total{status_code=~\"4..\"}[1m])) / sum(rate(lunaris_http_requests_total[1m])) * 100", "legendFormat": "4xx %" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" } }
+    },
+    {
+      "id": 3, "title": "Response Latency p50 / p95 / p99", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(lunaris_http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(lunaris_http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(lunaris_http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 4, "title": "Cache Hit Ratio (%)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(lunaris_cache_hits_total[5m])", "legendFormat": "Hits/s" },
+        { "expr": "rate(lunaris_cache_misses_total[5m])", "legendFormat": "Misses/s" },
+        { "expr": "rate(lunaris_cache_hits_total[5m]) / (rate(lunaris_cache_hits_total[5m]) + rate(lunaris_cache_misses_total[5m])) * 100", "legendFormat": "Hit %" }
+      ]
+    },
+    {
+      "id": 5, "title": "Scan Duration p50 / p95", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(lunaris_scan_duration_seconds_bucket[10m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(lunaris_scan_duration_seconds_bucket[10m])) by (le))", "legendFormat": "p95" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 6, "title": "Active Scans", "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 16 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [{ "expr": "lunaris_active_scans", "legendFormat": "Active" }],
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "steps": [{"color":"green","value":null},{"color":"yellow","value":3},{"color":"red","value":8}] } } },
+      "options": { "colorMode": "background" }
+    },
+    {
+      "id": 7, "title": "Scans by Status", "type": "timeseries",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 16 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(lunaris_scans_total[5m])) by (status)", "legendFormat": "{{status}}" }]
+    },
+    {
+      "id": 8, "title": "Node.js Heap (MB)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "lunaris_nodejs_nodejs_heap_size_used_bytes / 1024 / 1024", "legendFormat": "Heap Used" },
+        { "expr": "lunaris_nodejs_nodejs_heap_size_total_bytes / 1024 / 1024", "legendFormat": "Heap Total" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 9, "title": "SSRF Blocked + Validation Errors", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(lunaris_ssrf_blocked_total[5m])", "legendFormat": "SSRF Blocked/s" },
+        { "expr": "rate(lunaris_validation_errors_total[5m])", "legendFormat": "Validation Errors/s" }
+      ]
+    }
+  ]
+}

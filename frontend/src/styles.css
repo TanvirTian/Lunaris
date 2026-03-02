@@ -2,38 +2,38 @@
    LUNARIS — Space Observatory Design System
    ═══════════════════════════════════════════════════════════════════ */
 
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;500;600&family=Cormorant+Garamond:wght@400;500;600&display=swap');
 
 /* ── Design Tokens ─────────────────────────────────────────────── */
 :root {
-  /* Void palette — deep space, not "dark mode" */
-  --void:        #03040a;
-  --void-1:      #060810;
-  --void-2:      #0a0d1a;
-  --void-3:      #0f1326;
+  /* Void palette — lunar night */
+  --void:        #06050a;
+  --void-1:      #0a0906;
+  --void-2:      #0f0e0a;
+  --void-3:      #151310;
 
-  /* Nebula surfaces */
-  --surface:     #0c0f1e;
-  --surface-2:   #111526;
-  --surface-3:   #161b30;
+  /* Moon-dust surfaces */
+  --surface:     #100f0d;
+  --surface-2:   #161410;
+  --surface-3:   #1c1a15;
 
-  /* Borders — barely visible, like distant starlight */
-  --border:      rgba(100, 120, 200, 0.12);
-  --border-glow: rgba(100, 140, 255, 0.25);
+  /* Borders — pale moonlight */
+  --border:      rgba(196, 168, 105, 0.13);
+  --border-glow: rgba(214, 188, 130, 0.28);
 
-  /* Text — starlight hierarchy */
-  --star-bright: #e8ecff;
-  --star-mid:    #8892b8;
-  --star-dim:    #4a5280;
+  /* Text — parchment hierarchy */
+  --star-bright: #f0e8d5;
+  --star-mid:    #9e8e68;
+  --star-dim:    #524838;
 
   /* Signal colors */
-  --nebula:      #4d7cff;   /* blue — primary accent */
-  --nebula-glow: rgba(77, 124, 255, 0.15);
-  --pulsar:      #00d4ff;   /* cyan — highlights */
-  --aurora:      #7c3aed;   /* violet — secondary */
-  --nova:        #ff6b35;   /* orange-red — danger */
-  --comet:       #ffd166;   /* amber — warning */
-  --safe:        #06ffa5;   /* green — safe signals */
+  --nebula:      #c4a869;   /* gold — primary accent */
+  --nebula-glow: rgba(196, 168, 105, 0.15);
+  --pulsar:      #e8d4a0;   /* pale gold — highlights */
+  --aurora:      #a07840;   /* deep amber — secondary */
+  --nova:        #c85a3a;   /* terracotta — danger */
+  --comet:       #d4a040;   /* amber — warning */
+  --safe:        #5a9e6a;   /* muted green — safe signals */
 
   /* Fonts */
   --font-display: 'Orbitron', monospace;
@@ -106,12 +106,69 @@ body::after {
   height: 500px;
   background: radial-gradient(
     ellipse at center,
-    rgba(77, 124, 255, 0.06) 0%,
-    rgba(124, 58, 237, 0.04) 40%,
+    rgba(196, 168, 105, 0.055) 0%,
+    rgba(160, 120, 64, 0.03) 40%,
     transparent 70%
   );
   pointer-events: none;
   z-index: 0;
+}
+
+/* ── Lunar Nav ─────────────────────────────────────────────────── */
+.lunar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 0 22px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+}
+
+.lunar-logo {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Pure CSS crescent — transparent circle with offset box-shadow */
+.lunar-crescent {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: -8px 3px 0 3px rgba(228, 204, 148, 0.9);
+  filter: drop-shadow(0 0 8px rgba(196, 168, 105, 0.55));
+  animation: crescent-breathe 4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes crescent-breathe {
+  0%, 100% {
+    box-shadow: -8px 3px 0 3px rgba(228, 204, 148, 0.82);
+    filter: drop-shadow(0 0 8px rgba(196, 168, 105, 0.45));
+  }
+  50% {
+    box-shadow: -8px 3px 0 3px rgba(240, 218, 168, 1);
+    filter: drop-shadow(0 0 14px rgba(196, 168, 105, 0.75));
+  }
+}
+
+.lunar-wordmark {
+  font-family: 'Cormorant Garamond', var(--font-display), serif;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.38em;
+  color: var(--pulsar);
+  line-height: 1;
+  text-shadow: 0 0 24px rgba(196, 168, 105, 0.3);
+}
+
+.lunar-tagline {
+  font-family: var(--font-data);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--star-dim);
+  text-transform: uppercase;
 }
 
 /* ── Layout ────────────────────────────────────────────────────── */
@@ -265,12 +322,12 @@ body::after {
   border-color: var(--nebula);
   background: var(--surface-2);
   box-shadow:
-    0 0 0 3px rgba(77, 124, 255, 0.08),
+    0 0 0 3px rgba(196, 168, 105, 0.08),
     inset 0 1px 0 rgba(255,255,255,0.03);
 }
 
 .search-btn {
-  background: linear-gradient(135deg, var(--nebula), #3a5fd9);
+  background: linear-gradient(135deg, #c4a869, #8a6830);
   color: #fff;
   border: none;
   border-radius: var(--radius-lg);
@@ -299,7 +356,7 @@ body::after {
 .search-btn:hover:not(:disabled)::after { opacity: 1; }
 .search-btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 8px 24px rgba(77, 124, 255, 0.3);
+  box-shadow: 0 8px 24px rgba(196, 168, 105, 0.28);
 }
 .search-btn:active { transform: translateY(0); }
 .search-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -320,88 +377,16 @@ body::after {
   letter-spacing: 0.03em;
 }
 
-/* ── Loading State — Radar Sweep ───────────────────────────────── */
+/* ── Loading State — Spinning Moon ────────────────────────────── */
 .loading-state {
   text-align: center;
   padding: 100px 0;
   position: relative;
 }
 
-/* Radar circle */
-.radar-container {
-  position: relative;
-  width: 96px;
-  height: 96px;
-  margin: 0 auto 36px;
-}
-
-.radar-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 1px solid rgba(77, 124, 255, 0.2);
-}
-
-.radar-ring-2 {
-  inset: 16px;
-  border: 1px solid rgba(77, 124, 255, 0.15);
-}
-
-.radar-ring-3 {
-  inset: 32px;
-  border: 1px solid rgba(77, 124, 255, 0.15);
-}
-
-/* Radar sweep arm */
-.radar-sweep {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  animation: radar-spin 2s linear infinite;
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    transparent 280deg,
-    rgba(77, 124, 255, 0.08) 300deg,
-    rgba(0, 212, 255, 0.25) 355deg,
-    transparent 360deg
-  );
-}
-
-/* Center dot */
-.radar-center {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--pulsar);
-  transform: translate(-50%, -50%);
-  box-shadow: 0 0 12px var(--pulsar);
-}
-
-/* Crosshairs */
-.radar-container::before,
-.radar-container::after {
-  content: '';
-  position: absolute;
-  background: rgba(77, 124, 255, 0.15);
-}
-.radar-container::before {
-  top: 50%; left: 0; right: 0;
-  height: 1px;
-  transform: translateY(-50%);
-}
-.radar-container::after {
-  left: 50%; top: 0; bottom: 0;
-  width: 1px;
-  transform: translateX(-50%);
-}
-
-@keyframes radar-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+/* The SVG moon sits here, no extra wrapper needed */
+.loading-state > svg {
+  margin-bottom: 32px;
 }
 
 .loading-msg {
@@ -411,6 +396,7 @@ body::after {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   margin-bottom: 10px;
+  margin-top: 32px;
 }
 
 .loading-sub {
@@ -446,15 +432,6 @@ body::after {
   color: var(--star-mid);
 }
 
-.cached-badge {
-  background: rgba(0, 212, 255, 0.08);
-  color: var(--pulsar);
-  border: 1px solid rgba(0, 212, 255, 0.2);
-  padding: 2px 8px;
-  border-radius: 2px;
-  font-size: 9px;
-  letter-spacing: 0.2em;
-}
 
 /* ── Score Section ─────────────────────────────────────────────── */
 .score-section {
@@ -479,7 +456,7 @@ body::after {
   left: -60px;
   width: 280px;
   height: 280px;
-  background: radial-gradient(circle, rgba(77, 124, 255, 0.07) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(196, 168, 105, 0.07) 0%, transparent 70%);
   pointer-events: none;
 }
 
@@ -497,12 +474,12 @@ body::after {
 
 .score-ring svg {
   transform: rotate(-90deg);
-  filter: drop-shadow(0 0 12px rgba(77, 124, 255, 0.3));
+  filter: drop-shadow(0 0 12px rgba(196, 168, 105, 0.3));
 }
 
 .score-ring-bg { stroke: var(--border); }
 .score-ring-track {
-  stroke: rgba(77, 124, 255, 0.06);
+  stroke: rgba(196, 168, 105, 0.06);
   stroke-dasharray: 2 4;
 }
 .score-ring-fill {
@@ -630,8 +607,8 @@ body::after {
 .section-count {
   font-family: var(--font-data);
   font-size: 10px;
-  background: rgba(77, 124, 255, 0.08);
-  border: 1px solid rgba(77, 124, 255, 0.15);
+  background: rgba(196, 168, 105, 0.08);
+  border: 1px solid rgba(196, 168, 105, 0.15);
   color: var(--nebula);
   padding: 3px 10px;
   border-radius: 20px;
@@ -830,7 +807,7 @@ body::after {
 .script-tag { font-family: var(--font-data); font-size: 9px; padding: 3px 9px; border-radius: 20px; letter-spacing: 0.08em; }
 .tag-high   { background: rgba(255,107,53,0.1);  color: #ff8a65; border: 1px solid rgba(255,107,53,0.2); }
 .tag-medium { background: rgba(255,209,102,0.1); color: #ffd166; border: 1px solid rgba(255,209,102,0.2); }
-.tag-low    { background: rgba(77,124,255,0.1);  color: #7ba3ff; border: 1px solid rgba(77,124,255,0.2); }
+.tag-low    { background: rgba(196,168,105,0.1); color: #d4b878; border: 1px solid rgba(196,168,105,0.2); }
 .tag-exfil  { background: rgba(167,139,250,0.1); color: #c4b5fd; border: 1px solid rgba(167,139,250,0.2); }
 
 /* ── Cookie Analysis ───────────────────────────────────────────── */
@@ -932,3 +909,5 @@ body::after {
   .stat-chip { padding: 6px 10px; }
   .ownership-stats { grid-template-columns: repeat(2, 1fr); }
 }
+
+

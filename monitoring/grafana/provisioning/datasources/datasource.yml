@@ -1,0 +1,20 @@
+# Grafana datasource auto-provisioning
+# ─────────────────────────────────────────────────────────────────────────────
+# Mounted at: /etc/grafana/provisioning/datasources/prometheus.yml
+# Grafana reads this on startup and creates the Prometheus datasource
+# automatically — no manual "Add data source" step needed.
+
+apiVersion: 1
+
+datasources:
+  - name:      Prometheus
+    type:      prometheus
+    access:    proxy       # Grafana server proxies requests to Prometheus (not browser-direct)
+    uid:       prometheus  # Stable UID referenced in dashboard JSON
+    url:       http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval:         '15s'   # Match prometheus scrape_interval
+      httpMethod:           POST    # POST is more efficient for large queries
+      exemplarTraceIdDestinations: []
+    editable: true

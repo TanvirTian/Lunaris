@@ -1,54 +1,186 @@
-const counters = {
-  scans_started:   0,
-  scans_succeeded: 0,
-  scans_failed:    0,
-  scans_cached:    0,
-  ssrf_blocked:    0,
-  validation_errors: 0,
-};
+/**
+ * Metrics Service — prom-client (Prometheus)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Why prom-client?
+ *   - De-facto standard for Node.js Prometheus instrumentation
+ *   - Provides collectDefaultMetrics() for free process/heap/GC telemetry
+ *   - Single dependency, no agent, no sidecar
+ *   - Output format scraped directly by Prometheus — no translation layer
+ *
+ * Metrics exposed:
+ *   [Counter]   http_requests_total          — all HTTP traffic by route/status
+ *   [Histogram] http_request_duration_seconds — latency percentiles (p50/p95/p99)
+ *   [Counter]   scans_total                  — scan outcomes by status
+ *   [Counter]   cache_results_total          — cache hits vs misses
+ *   [Counter]   external_api_calls_total     — third-party fetches (script analysis)
+ *   [Counter]   validation_errors_total      — bad URL inputs
+ *   [Counter]   ssrf_blocked_total           — blocked SSRF attempts
+ *   [Gauge]     active_scans                 — scans currently in-flight
+ *   [Histogram] scan_duration_seconds        — how long crawls take
+ *   [Default]   process_*, nodejs_*          — Node.js runtime metrics
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 
-// Simple histogram — tracks how many scans fell into each duration bucket
-const durationBuckets = {
-  under_10s:  0,  // fast sites
-  under_30s:  0,  // normal sites
-  under_60s:  0,  // slow sites
-  under_90s:  0,  // very slow
-  over_90s:   0,  // timeout risk
-};
+import {
+  Registry,
+  Counter,
+  Histogram,
+  Gauge,
+  collectDefaultMetrics,
+} from 'prom-client';
 
-// Track per-worker start times for processing duration
-const activeJobTimers = new Map(); // jobId → startTime (ms)
+// Use a dedicated registry so we don't pollute the global default.
+// This is important if you ever run tests — each test can get a clean registry.
+export const registry = new Registry();
+
+// ── Default Node.js metrics ───────────────────────────────────────────────────
+// Collects: process CPU/memory, event loop lag, GC stats, active handles, etc.
+// These are invaluable for spotting memory leaks in long-running crawl workers.
+collectDefaultMetrics({
+  register: registry,
+  prefix: 'lunaris_nodejs_',  // namespace prefix to avoid collisions
+  gcDurationBuckets: [0.001, 0.01, 0.1, 1, 2, 5],
+});
+
+// ── HTTP Request Counter ──────────────────────────────────────────────────────
+export const httpRequestsTotal = new Counter({
+  name: 'lunaris_http_requests_total',
+  help: 'Total number of HTTP requests received',
+  labelNames: ['method', 'route', 'status_code'],
+  registers: [registry],
+});
+
+// ── HTTP Request Duration ─────────────────────────────────────────────────────
+// Buckets tuned for a web crawl API:
+//   - Most health/cache responses: < 100ms
+//   - DB reads: < 500ms
+//   - Fresh crawls: 5–60 seconds
+export const httpRequestDurationSeconds = new Histogram({
+  name: 'lunaris_http_request_duration_seconds',
+  help: 'HTTP request latency in seconds',
+  labelNames: ['method', 'route', 'status_code'],
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
+  registers: [registry],
+});
+
+// ── Scan Outcome Counter ──────────────────────────────────────────────────────
+export const scansTotal = new Counter({
+  name: 'lunaris_scans_total',
+  help: 'Total scan jobs by outcome',
+  labelNames: ['status'], // started | succeeded | failed | cached
+  registers: [registry],
+});
+
+// ── Cache Performance Counters ────────────────────────────────────────────────
+// Separate counters (not a single counter with hit/miss label) to make
+// Prometheus rate queries simpler:
+//   cache_hit_ratio = rate(cache_hits[5m]) / (rate(cache_hits[5m]) + rate(cache_misses[5m]))
+export const cacheHitsTotal = new Counter({
+  name: 'lunaris_cache_hits_total',
+  help: 'Number of analyze requests served from the 24-hour domain cache',
+  registers: [registry],
+});
+
+export const cacheMissesTotal = new Counter({
+  name: 'lunaris_cache_misses_total',
+  help: 'Number of analyze requests that triggered a fresh crawl (cache miss)',
+  registers: [registry],
+});
+
+// ── External API Call Counter ─────────────────────────────────────────────────
+// Tracks outbound fetch() calls made during script intelligence analysis.
+// Useful for cost tracking and detecting runaway external requests.
+export const externalApiCallsTotal = new Counter({
+  name: 'lunaris_external_api_calls_total',
+  help: 'Outbound HTTP requests made to third-party script URLs during analysis',
+  labelNames: ['result'], // success | error | timeout
+  registers: [registry],
+});
+
+// ── Validation / Security Counters ───────────────────────────────────────────
+export const validationErrorsTotal = new Counter({
+  name: 'lunaris_validation_errors_total',
+  help: 'Number of URL validation failures (malformed, no TLD, etc.)',
+  registers: [registry],
+});
+
+export const ssrfBlockedTotal = new Counter({
+  name: 'lunaris_ssrf_blocked_total',
+  help: 'Number of requests blocked by SSRF protection',
+  registers: [registry],
+});
+
+// ── Active Scans Gauge ────────────────────────────────────────────────────────
+// Gauge (not counter) because it goes up AND down.
+// Useful alert: if activeScans stays high for >5min, workers may be stuck.
+export const activeScansGauge = new Gauge({
+  name: 'lunaris_active_scans',
+  help: 'Number of scan jobs currently being processed by workers',
+  registers: [registry],
+});
+
+// ── Scan Duration Histogram ───────────────────────────────────────────────────
+// Separate from HTTP duration because crawls run async in worker processes.
+// Buckets aligned with TIMEOUTS constants in crawler.js:
+//   navigation: 25s, pageSettle: 6s, jsSettle: 2s, up to MAX_PAGES=4
+export const scanDurationSeconds = new Histogram({
+  name: 'lunaris_scan_duration_seconds',
+  help: 'Time taken to complete a full crawl + analysis pipeline',
+  labelNames: ['risk_level'],
+  buckets: [5, 10, 20, 30, 45, 60, 90, 120],
+  registers: [registry],
+});
+
+// ── Backwards-compatible in-memory metrics object ─────────────────────────────
+// This wraps the prom-client metrics in the same interface as the old metrics.js
+// so existing callers (worker.js, routes) need zero changes.
+const activeJobTimers = new Map(); // jobId → { startMs, url }
 
 export const metrics = {
+  // ── Counters ──────────────────────────────────────────────────────────────
+
   increment(key) {
-    if (key in counters) counters[key]++;
+    switch (key) {
+      case 'scans_started':      scansTotal.inc({ status: 'started' });      activeScansGauge.inc(); break;
+      case 'scans_succeeded':    scansTotal.inc({ status: 'succeeded' });     activeScansGauge.dec(); break;
+      case 'scans_failed':       scansTotal.inc({ status: 'failed' });        activeScansGauge.dec(); break;
+      case 'scans_cached':       scansTotal.inc({ status: 'cached' });        cacheHitsTotal.inc();   break;
+      case 'cache_miss':         cacheMissesTotal.inc();  break;
+      case 'validation_errors':  validationErrorsTotal.inc(); break;
+      case 'ssrf_blocked':       ssrfBlockedTotal.inc();  break;
+    }
   },
+
+  // ── Job timers ────────────────────────────────────────────────────────────
 
   startJobTimer(jobId) {
-    activeJobTimers.set(jobId, Date.now());
+    activeJobTimers.set(jobId, { startMs: Date.now() });
   },
 
-  endJobTimer(jobId) {
-    const start = activeJobTimers.get(jobId);
-    if (!start) return null;
+  endJobTimer(jobId, riskLevel = 'unknown') {
+    const entry = activeJobTimers.get(jobId);
+    if (!entry) return null;
     activeJobTimers.delete(jobId);
-    const durationMs = Date.now() - start;
-
-    // Bucket the duration
-    if      (durationMs < 10_000) durationBuckets.under_10s++;
-    else if (durationMs < 30_000) durationBuckets.under_30s++;
-    else if (durationMs < 60_000) durationBuckets.under_60s++;
-    else if (durationMs < 90_000) durationBuckets.under_90s++;
-    else                          durationBuckets.over_90s++;
-
+    const durationMs = Date.now() - entry.startMs;
+    scanDurationSeconds.observe({ risk_level: riskLevel }, durationMs / 1000);
     return durationMs;
   },
 
+  // ── Prometheus metrics endpoint helper ───────────────────────────────────
+  // Returns the full metrics text in Prometheus exposition format.
+  async getMetrics() {
+    return registry.metrics();
+  },
+
+  contentType() {
+    return registry.contentType;
+  },
+
+  // ── Snapshot (kept for backwards compat / health endpoint) ───────────────
   snapshot() {
     return {
-      counters: { ...counters },
-      duration_buckets: { ...durationBuckets },
       active_jobs: activeJobTimers.size,
+      note: 'Full metrics available at GET /metrics (Prometheus format)',
     };
   },
 };

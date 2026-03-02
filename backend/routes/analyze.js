@@ -1,15 +1,81 @@
+/**
+ * POST /analyze
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Accepts a URL, checks the 24-hour domain cache, and either returns cached
+ * data immediately (with a small UX delay) or enqueues a fresh crawl.
+ *
+ * Cache architecture:
+ *   Layer 1: DomainScan (PostgreSQL) — 24h window, single row per domain
+ *   Layer 2: Redis NX lock — prevents duplicate crawls for in-flight scans
+ *
+ * UX delay on cache hits:
+ *   Returns cached results after 300–600ms. This lives in the BACKEND because:
+ *   1. The frontend cannot reliably distinguish cache hits from fresh results
+ *      without trusting a client-side header that could be spoofed.
+ *   2. Centralizing the delay in one place means it applies to ALL clients
+ *      (web, mobile, API consumers) consistently.
+ *   3. The delay is intentionally randomized to avoid a "mechanical" feel
+ *      that would make the artificial pause obvious to developers.
+ *   Frontend role: show a loading indicator from request start to response —
+ *   it does NOT need to implement any delay logic itself.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
 import { db } from '../lib/db.js';
 import { scanQueue } from '../lib/queue.js';
 import { logger } from '../lib/logger.js';
-import { metrics } from '../lib/metrics.js';
+import { metrics, cacheHitsTotal, cacheMissesTotal } from '../lib/metrics.js';
 import { normalizeUrl } from '../services/crawler.js';
 
-// Dedup window: if same URL scanned successfully within this period, return cached
-const DEDUP_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+// ── Cache configuration ───────────────────────────────────────────────────────
 
-// Redis key prefix for dedup locks (prevents race condition on simultaneous requests)
-const DEDUP_KEY = (url) => `dedup:${url}`;
-const DEDUP_TTL_S = 60 * 10; // 10 minutes in seconds
+// 24-hour cache window: if a domain was successfully scanned within this
+// period, return the cached DomainScan row instead of triggering a new crawl.
+const CACHE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+// UX delay range for cache hits (milliseconds).
+// Randomized within this window so it doesn't feel mechanical.
+// 300ms is fast enough to feel snappy; 600ms is slow enough to signal "work done".
+const CACHE_DELAY_MIN_MS = 300;
+const CACHE_DELAY_MAX_MS = 600;
+
+// Redis dedup lock: prevents two simultaneous requests for the same domain
+// from both passing the DB cache check and spawning two crawls.
+// Key is domain-based (not full URL) so example.com and www.example.com share a lock.
+const DEDUP_LOCK_KEY = (domain) => `dedup:domain:${domain}`;
+const DEDUP_TTL_S    = 60 * 15; // 15 minutes — covers max crawl duration
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Non-blocking sleep. Used for the UX delay on cache hits.
+ * Lives here (not the frontend) so ALL clients get consistent behavior.
+ */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Random integer in [min, max] inclusive.
+ */
+function randomBetween(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+/**
+ * Extract the canonical domain from a normalized URL for cache lookups.
+ * Strips www. prefix so "www.example.com" and "example.com" share one cache row.
+ *
+ * Example:
+ *   "https://www.example.com/path?q=1" → "example.com"
+ *   "https://sub.example.co.uk"         → "sub.example.co.uk"  (sub-domains preserved)
+ */
+function extractDomain(normalizedUrl) {
+  const hostname = new URL(normalizedUrl).hostname;
+  return hostname.startsWith('www.') ? hostname.slice(4) : hostname;
+}
+
+// ── Route ─────────────────────────────────────────────────────────────────────
 
 export default async function analyzeRoute(fastify) {
   fastify.post('/analyze', {
@@ -22,8 +88,12 @@ export default async function analyzeRoute(fastify) {
         },
       },
     },
+    // Exclude this specific route from global rate limiting if you want
+    // cache-hit requests (which are cheap) to not count against the limit.
+    // Remove this config block to apply the global 10/min limit uniformly.
+    // config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
   }, async (request, reply) => {
-    const requestId = request.id; // Fastify auto-generates per-request IDs
+    const requestId = request.id;
     const log = logger.child({ requestId });
 
     // ── 1. URL normalization + validation ─────────────────────────────────────
@@ -37,44 +107,85 @@ export default async function analyzeRoute(fastify) {
       return reply.status(400).send({ error: friendlyError(err.message) });
     }
 
-    log.info({ url: cleanUrl }, 'analyze request received');
+    const domain = extractDomain(cleanUrl);
+    log.info({ url: cleanUrl, domain }, 'analyze request received');
 
-    // ── 2. DB-level deduplication ─────────────────────────────────────────────
-    // Check if a successful scan exists within the dedup window.
-    // This is the primary dedup check — authoritative because it's in PostgreSQL.
-    const dedupCutoff = new Date(Date.now() - DEDUP_WINDOW_MS);
-    const recentJob = await db.scanJob.findFirst({
-      where: {
-        targetUrl:   cleanUrl,
-        status:      'SUCCESS',
-        completedAt: { gte: dedupCutoff },
-      },
-      orderBy: { completedAt: 'desc' },
-      select:  { id: true, completedAt: true },
+    // ── 2. Domain cache check (24h window) ────────────────────────────────────
+    //
+    // Atomic single-row lookup on domain_scans.domain (unique index).
+    // No JOIN, no ordering — O(1) regardless of total scan volume.
+    //
+    // Race condition safety:
+    //   DomainScan uses upsert semantics in the worker, so by the time we
+    //   read it here, it's always the latest complete result for this domain.
+    //   The Redis lock below handles the in-flight case.
+    const cacheCutoff = new Date(Date.now() - CACHE_WINDOW_MS);
+
+    const domainScan = await db.domainScan.findUnique({
+      where: { domain },
     });
 
-    if (recentJob) {
+    if (domainScan && domainScan.lastScannedAt > cacheCutoff) {
+      // ── Cache HIT ─────────────────────────────────────────────────────────
+      cacheHitsTotal.inc();
       metrics.increment('scans_cached');
-      log.info({ jobId: recentJob.id }, 'returning cached scan result');
+
+      log.info({
+        domain,
+        lastScannedAt: domainScan.lastScannedAt,
+        cacheAgeMs: Date.now() - domainScan.lastScannedAt.getTime(),
+      }, 'cache hit — returning DomainScan result');
+
+      // UX delay: makes the response feel like real work was done.
+      // 300–600ms random window prevents a mechanical "ping-pong" feel.
+      // This intentionally runs BEFORE sending the response so the client
+      // experiences the delay as response latency, not a client-side pause.
+      const delayMs = randomBetween(CACHE_DELAY_MIN_MS, CACHE_DELAY_MAX_MS);
+      await sleep(delayMs);
+
       return reply.status(200).send({
-        jobId:    recentJob.id,
-        status:   'SUCCESS',
-        cached:   true,
-        cachedAt: recentJob.completedAt,
-        pollUrl:  `/scan/${recentJob.id}`,
+        jobId:         domainScan.lastJobId,
+        status:        'SUCCESS',
+        cached:        true,
+        cachedAt:      domainScan.lastScannedAt,
+        cacheExpiresAt: new Date(domainScan.lastScannedAt.getTime() + CACHE_WINDOW_MS),
+        domain,
+        result: {
+          score:            domainScan.score,
+          riskLevel:        domainScan.riskLevel,
+          summary:          domainScan.summary,
+          trackerCount:     domainScan.trackerCount,
+          cookieCount:      domainScan.cookieCount,
+          externalDomains:  domainScan.externalDomains,
+          isHttps:          domainScan.isHttps,
+          pagesCrawled:     domainScan.pagesCrawled,
+          hasCsp:           domainScan.hasCsp,
+          fingerprinting: {
+            canvas:   domainScan.canvasFingerprint,
+            webgl:    domainScan.webglFingerprint,
+            font:     domainScan.fontFingerprint,
+            keylogger: domainScan.keylogger,
+          },
+          data: domainScan.rawData,
+        },
+        // Expose pollUrl for clients that want to fetch the full job record
+        pollUrl: domainScan.lastJobId ? `/scan/${domainScan.lastJobId}` : null,
       });
     }
 
+    // ── Cache MISS ────────────────────────────────────────────────────────────
+    cacheMissesTotal.inc();
+    metrics.increment('cache_miss');
+
     // ── 3. Redis dedup lock ───────────────────────────────────────────────────
-    // Secondary dedup: prevents two simultaneous requests for the same URL
-    // from both passing the DB check (race condition) and spawning two crawls.
-    // SET NX = "set if not exists" — atomic Redis operation.
+    // Prevents two simultaneous cache-miss requests for the same domain from
+    // both spawning a crawl. SET NX = atomic "set if not exists".
     const { redis } = await import('../lib/redis.js');
-    const dedupKey = DEDUP_KEY(cleanUrl);
-    const lockAcquired = await redis.set(dedupKey, '1', 'EX', DEDUP_TTL_S, 'NX');
+    const lockKey     = DEDUP_LOCK_KEY(domain);
+    const lockAcquired = await redis.set(lockKey, '1', 'EX', DEDUP_TTL_S, 'NX');
 
     if (!lockAcquired) {
-      // Another request is already processing this URL — find that pending job
+      // Another request is already crawling this domain — find that pending job
       const pendingJob = await db.scanJob.findFirst({
         where:   { targetUrl: cleanUrl, status: { in: ['PENDING', 'RUNNING'] } },
         orderBy: { createdAt: 'desc' },
@@ -82,31 +193,32 @@ export default async function analyzeRoute(fastify) {
       });
 
       if (pendingJob) {
-        log.info({ jobId: pendingJob.id }, 'returning in-progress job');
+        log.info({ jobId: pendingJob.id }, 'domain crawl already in-flight — returning pending job');
         return reply.status(202).send({
           jobId:   pendingJob.id,
           status:  pendingJob.status,
           cached:  false,
+          domain,
           pollUrl: `/scan/${pendingJob.id}`,
-          message: 'Scan already in progress for this URL.',
+          message: 'A scan for this domain is already in progress.',
         });
       }
+      // Lock exists but no pending job found — stale lock from a crashed worker.
+      // Fall through and create a new job.
     }
 
-    // ── 4. Create ScanJob in DB (PENDING) ─────────────────────────────────────
+    // ── 4. Create ScanJob (PENDING) ───────────────────────────────────────────
     let job;
     try {
       job = await db.scanJob.create({
         data: {
           targetUrl: cleanUrl,
           status:    'PENDING',
-          // userId: request.user?.id  ← wire in when auth is added
         },
         select: { id: true },
       });
     } catch (err) {
-      // Clean up Redis lock if DB write failed
-      await redis.del(dedupKey).catch(() => {});
+      await redis.del(lockKey).catch(() => {});
       log.error({ error: err.message }, 'failed to create ScanJob');
       return reply.status(500).send({ error: 'Failed to create scan job. Please try again.' });
     }
@@ -116,31 +228,39 @@ export default async function analyzeRoute(fastify) {
       await scanQueue.add('scan', {
         jobId: job.id,
         url:   cleanUrl,
+        domain,
       }, {
         jobId: job.id, // use DB UUID as BullMQ job ID for traceability
       });
     } catch (err) {
-      // Queue add failed — mark job FAILED immediately so it's not orphaned
       await db.scanJob.update({
         where: { id: job.id },
-        data:  { status: 'FAILED', errorMessage: 'Failed to enqueue scan job', completedAt: new Date() },
+        data:  {
+          status:       'FAILED',
+          errorMessage: 'Failed to enqueue scan job',
+          completedAt:  new Date(),
+        },
       }).catch(() => {});
-      await redis.del(dedupKey).catch(() => {});
+      await redis.del(lockKey).catch(() => {});
       log.error({ jobId: job.id, error: err.message }, 'failed to enqueue job');
       return reply.status(500).send({ error: 'Failed to queue scan. Please try again.' });
     }
 
-    log.info({ jobId: job.id }, 'scan job enqueued');
+    metrics.increment('scans_started');
+    log.info({ jobId: job.id, domain }, 'scan job enqueued');
 
     return reply.status(202).send({
       jobId:   job.id,
       status:  'PENDING',
       cached:  false,
+      domain,
       pollUrl: `/scan/${job.id}`,
       message: 'Scan queued. Poll pollUrl for status and results.',
     });
   });
 }
+
+// ── Error message humanizer ───────────────────────────────────────────────────
 
 function friendlyError(msg) {
   if (msg.includes('URL_NO_TLD'))
