@@ -1,18 +1,3 @@
-# Lunaris — Local Development
-#
-# Service map:
-#   Frontend    → http://localhost:3000
-#   Backend     → http://localhost:8000
-#   Prisma      → http://localhost:5555
-#   Postgres    → localhost:5432
-#   Redis       → localhost:6379
-#   Prometheus  → http://localhost:9090
-#   Grafana     → http://localhost:3001  (admin / admin — LOCAL DEV ONLY)
-#
-# Start:  docker compose up --build
-# Stop:   docker compose down
-# Nuke:   docker compose down -v
-
 services:
 
   postgres:

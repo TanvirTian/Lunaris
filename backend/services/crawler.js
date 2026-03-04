@@ -25,6 +25,8 @@ import { isIP } from 'net';
  * 17.  CSP header analysis
  * 18.  Multi-page crawling (follows internal links)
  * 19.  Sitemap.xml parsing for smarter page selection
+ * 20.  Resource filtering — image/media/font/CSS bodies blocked (requests still captured)
+ * 21.  Per-page request cap (500) — prevents runaway tracker-heavy pages
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -38,6 +40,38 @@ const TIMEOUTS = {
   pageSettle: 6_000,   // Wait for JS after domcontentloaded
   jsSettle:   2_000,   // Extra settle time for trackers to fire
 };
+
+// ─── Resource filtering ───────────────────────────────────────────────────────
+//
+// These resource types carry zero privacy signal in their response bodies.
+// The request event fires BEFORE route.fulfill(), so every URL, header, and
+// cookie sent with these requests is still captured in our requests[] array —
+// we lose nothing analytically. We just never transfer the response bytes.
+//
+// Why route.fulfill() and NOT route.abort()?
+//   abort() raises a network error in the page JS (e.g. onerror on <img>).
+//   Error handlers can suppress beacon fires or alter page behavior, making
+//   us miss real tracking events. fulfill() with an empty 200 is invisible
+//   to the page — the resource "loaded successfully", JS continues normally.
+//
+const BLOCKED_RESOURCE_TYPES = new Set([
+  'image',       // Tracking pixels captured via request URL — body useless
+  'media',       // Video/audio — never needed, often tens of MB
+  'font',        // Font bytes carry no signal; the request URL does
+  'stylesheet',  // CSS body rarely needed; @imports captured by browser already
+]);
+
+// Minimal empty responses per MIME type — keeps page JS happy
+const EMPTY_RESPONSE = {
+  image:      { contentType: 'image/png',   body: Buffer.alloc(0) },
+  media:      { contentType: 'video/mp4',   body: Buffer.alloc(0) },
+  font:       { contentType: 'font/woff2',  body: Buffer.alloc(0) },
+  stylesheet: { contentType: 'text/css',    body: Buffer.alloc(0) },
+};
+
+// Maximum requests to record per page — prevents runaway memory on
+// ad-heavy pages that can fire 2000+ requests
+const MAX_REQUESTS_PER_PAGE = 500;
 
 // ─── Layer 1: URL Normalization ───────────────────────────────────────────────
 
@@ -185,7 +219,8 @@ function assertNotPrivate(hostname, resolvedAddress) {
  *  1. No response object from Playwright (Chromium ate the error)
  *  2. HTTP 4xx/5xx status code
  *  3. Response URL is a chrome-error:// or about: internal page
- *  4. Network request count ≤ 1 (error pages fire no sub-requests)
+ *  4. No meaningful network activity (script/xhr/fetch requests only — image/font
+ *     requests are now blocked so we don't count them here)
  *  5. Page content contains Chromium error page markers
  */
 async function detectNavigationFailure(page, response, requests, url, isHomepage) {
@@ -212,11 +247,18 @@ async function detectNavigationFailure(page, response, requests, url, isHomepage
     signals.push('CHROME_INTERNAL_PAGE');
   }
 
-  // Signal 4: Real sites always load sub-resources (CSS, JS, images, fonts).
-  // Chromium error pages fire exactly 1 request — the failed navigation itself.
-  // Filter data: URIs which are always present.
-  const realRequests = requests.filter((r) => !r.url.startsWith('data:'));
-  if (realRequests.length <= 1) {
+  // Signal 4: Check for meaningful network activity.
+  // IMPORTANT: We now block image/font/stylesheet/media bodies, so we cannot
+  // use total request count as the signal — a minimal page might only load
+  // the document itself plus a couple of scripts. Instead we count only the
+  // resource types that are never blocked: script, xhr, fetch, document, other.
+  // A real page will always have at least the document request itself (type=document)
+  // plus typically 1+ scripts. An error page fires only the failed navigation.
+  const meaningfulRequests = requests.filter((r) =>
+    !r.url.startsWith('data:') &&
+    !BLOCKED_RESOURCE_TYPES.has(r.resourceType)
+  );
+  if (meaningfulRequests.length <= 1) {
     signals.push('NO_NETWORK_ACTIVITY');
   }
 
@@ -442,18 +484,51 @@ async function crawlSinglePage(page, url, baseHostname, isHomepage = false) {
   const webSockets = [];
   const redirectChains = [];
 
-  // ── Network interception ───────────────────────────────────────────────────
-  page.on('request', (req) => {
+  // ── Resource filtering + network interception ─────────────────────────────
+  //
+  // We use page.route() to intercept every request. For blocked resource types
+  // (image/media/font/stylesheet) we:
+  //   1. Record the request metadata FIRST (URL, headers, tracking params) —
+  //      this is what we care about analytically. A tracking pixel's URL and
+  //      the cookies sent with it are captured here regardless.
+  //   2. Fulfill with an empty 200 response — page JS sees a successful load,
+  //      beacon-firing code and lazy-load handlers still execute normally.
+  //
+  // For all other types (script, xhr, fetch, document, websocket, other)
+  // we let the request continue unmodified.
+  //
+  await page.route('**/*', (route) => {
+    const req = route.request();
     const reqUrl = req.url();
+    const resourceType = req.resourceType();
     const method = req.method();
     const postData = method === 'POST' ? req.postData() : null;
-    requests.push({
-      url: reqUrl,
-      method,
-      resourceType: req.resourceType(),
-      trackingParams: inspectRequestPayload(reqUrl, postData),
-      hasPostData: !!postData,
-    });
+
+    // Always capture request metadata — even for blocked resources.
+    // Tracking pixels, font CDN requests, etc. all reveal third-party
+    // relationships regardless of whether we fetch the response body.
+    if (requests.length < MAX_REQUESTS_PER_PAGE) {
+      requests.push({
+        url: reqUrl,
+        method,
+        resourceType,
+        trackingParams: inspectRequestPayload(reqUrl, postData),
+        hasPostData: !!postData,
+      });
+    }
+
+    // Block response body for non-analytical resource types
+    if (BLOCKED_RESOURCE_TYPES.has(resourceType)) {
+      const stub = EMPTY_RESPONSE[resourceType];
+      return route.fulfill({
+        status: 200,
+        contentType: stub.contentType,
+        body: stub.body,
+      });
+    }
+
+    // Let everything else through normally
+    return route.continue();
   });
 
   // ── Redirect chain tracking ────────────────────────────────────────────────
