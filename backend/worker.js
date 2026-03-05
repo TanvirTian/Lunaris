@@ -1,21 +1,3 @@
-/**
- * BullMQ Scan Worker
- * ─────────────────────────────────────────────────────────────────────────────
- * Processes scan jobs from the queue:
- *   1. Crawl the website (Playwright)
- *   2. Run privacy analysis
- *   3. Persist ScanResult (append-only history)
- *   4. Upsert DomainScan (single-row-per-domain state registry / cache)
- *   5. Update ScanJob status
- *
- * The DomainScan upsert (step 4) is the key change from v1:
- *   - On first scan for a domain: INSERT
- *   - On re-scan: UPDATE in place
- *   - @unique constraint on domain enforced at DB level
- *   - No duplicate rows, no race conditions, no application-level dedup needed
- * ─────────────────────────────────────────────────────────────────────────────
- */
-
 import { Worker } from 'bullmq';
 import { redis } from './lib/redis.js';
 import { db, disconnectDb } from './lib/db.js';

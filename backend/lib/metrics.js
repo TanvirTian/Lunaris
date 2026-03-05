@@ -1,26 +1,3 @@
-/**
- * Metrics Service — prom-client (Prometheus)
- * ─────────────────────────────────────────────────────────────────────────────
- * Why prom-client?
- *   - De-facto standard for Node.js Prometheus instrumentation
- *   - Provides collectDefaultMetrics() for free process/heap/GC telemetry
- *   - Single dependency, no agent, no sidecar
- *   - Output format scraped directly by Prometheus — no translation layer
- *
- * Metrics exposed:
- *   [Counter]   http_requests_total          — all HTTP traffic by route/status
- *   [Histogram] http_request_duration_seconds — latency percentiles (p50/p95/p99)
- *   [Counter]   scans_total                  — scan outcomes by status
- *   [Counter]   cache_results_total          — cache hits vs misses
- *   [Counter]   external_api_calls_total     — third-party fetches (script analysis)
- *   [Counter]   validation_errors_total      — bad URL inputs
- *   [Counter]   ssrf_blocked_total           — blocked SSRF attempts
- *   [Gauge]     active_scans                 — scans currently in-flight
- *   [Histogram] scan_duration_seconds        — how long crawls take
- *   [Default]   process_*, nodejs_*          — Node.js runtime metrics
- * ─────────────────────────────────────────────────────────────────────────────
- */
-
 import {
   Registry,
   Counter,

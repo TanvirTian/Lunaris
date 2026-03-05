@@ -1,16 +1,3 @@
-/**
- * Cookie Deep Analysis Service
- * ─────────────────────────────────────────────────────────────────────────────
- * Goes far beyond "count cookies". Analyzes each cookie for:
- *  - Purpose classification (session / analytics / tracking / functional)
- *  - Lifetime scoring (session vs years-long trackers)
- *  - Security attribute audit (Secure, HttpOnly, SameSite)
- *  - Third-party cookie detection
- *  - Supercookie risk signals
- *  - Company attribution (who set this cookie?)
- * ─────────────────────────────────────────────────────────────────────────────
- */
-
 // Known cookie name → company/purpose mapping
 const KNOWN_COOKIES = {
   // Google

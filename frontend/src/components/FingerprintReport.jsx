@@ -1,6 +1,4 @@
-/**
- * Displays browser fingerprinting detection results.
- */
+// Displays browser fingerprinting detection results.
 export default function FingerprintReport({ fingerprinting, storageAnalysis }) {
   if (!fingerprinting) return null;
 

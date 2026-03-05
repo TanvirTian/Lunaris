@@ -1,22 +1,3 @@
-/**
- * Lunaris API Client
- * ─────────────────────────────────────────────────────────────────────────────
- * Abstracts the two-phase scan flow:
- *
- *   Cache HIT  (fast path):
- *     POST /analyze → { cached: true, result: { ...data } }
- *     Backend applies 300–600ms UX delay before responding.
- *     No polling needed — result is inline in the response.
- *
- *   Cache MISS (slow path):
- *     POST /analyze → { jobId }
- *     → poll GET /scan/:jobId until SUCCESS or FAILED
- *     → return normalized job object
- *
- * Both paths return the same shape so App.jsx needs zero branching.
- * ─────────────────────────────────────────────────────────────────────────────
- */
-
 const API_BASE        = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const POLL_INTERVAL_MS = 2_500;
 const MAX_POLL_ATTEMPTS = 60; // 60 × 2.5s = 2.5 minutes max

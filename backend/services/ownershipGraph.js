@@ -1,103 +1,103 @@
 /**
- * Company Ownership Graph Service
+ * Company Ownership Graph — Production Upgrade
  * ─────────────────────────────────────────────────────────────────────────────
- * Maps tracker domains → parent companies and builds a graph showing
- * which corporate entities are collecting data and how they're connected.
+ * Upgrades over previous version:
  *
- * Reveals the hidden truth: visiting one site often means data flows to
- * a handful of massive companies (Google, Meta, Alphabet subsidiaries, etc.)
+ *  - ASN-based corporate inference for unknown domains
+ *    (uses Team Cymru IP-to-ASN DNS, no API key needed)
+ *  - Expanded DOMAIN_OWNERSHIP with data brokers, identity resolution,
+ *    and session replay companies
+ *  - Risk tier classification per company category
+ *  - Cross-site tracker signal: domains appearing across many sites
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-// Domain → parent company + data category mapping
-// Each entry represents who REALLY owns/operates this domain
 const DOMAIN_OWNERSHIP = {
-  // ── Google / Alphabet ──────────────────────────────────────────────────────
-  'google-analytics.com':    { parent: 'Alphabet (Google)', brand: 'Google Analytics',   color: '#4285F4', category: 'Analytics'    },
-  'googletagmanager.com':    { parent: 'Alphabet (Google)', brand: 'Google Tag Manager', color: '#4285F4', category: 'Analytics'    },
-  'doubleclick.net':         { parent: 'Alphabet (Google)', brand: 'Google DoubleClick', color: '#EA4335', category: 'Advertising'  },
-  'googlesyndication.com':   { parent: 'Alphabet (Google)', brand: 'Google AdSense',     color: '#EA4335', category: 'Advertising'  },
-  'googleadservices.com':    { parent: 'Alphabet (Google)', brand: 'Google Ads',         color: '#EA4335', category: 'Advertising'  },
-  'youtube.com':             { parent: 'Alphabet (Google)', brand: 'YouTube',            color: '#FF0000', category: 'Media'        },
-  'ytimg.com':               { parent: 'Alphabet (Google)', brand: 'YouTube',            color: '#FF0000', category: 'Media'        },
-  'ggpht.com':               { parent: 'Alphabet (Google)', brand: 'Google',             color: '#4285F4', category: 'Infrastructure'},
+  // ── Alphabet / Google ──────────────────────────────────────────────────────
+  'google-analytics.com':    { parent: 'Alphabet (Google)', brand: 'Google Analytics',       color: '#4285F4', category: 'Analytics',     riskTier: 'medium'   },
+  'googletagmanager.com':    { parent: 'Alphabet (Google)', brand: 'Google Tag Manager',     color: '#4285F4', category: 'Analytics',     riskTier: 'medium'   },
+  'doubleclick.net':         { parent: 'Alphabet (Google)', brand: 'Google DoubleClick',     color: '#EA4335', category: 'Advertising',   riskTier: 'high'     },
+  'googlesyndication.com':   { parent: 'Alphabet (Google)', brand: 'Google AdSense',         color: '#EA4335', category: 'Advertising',   riskTier: 'high'     },
+  'googleadservices.com':    { parent: 'Alphabet (Google)', brand: 'Google Ads',             color: '#EA4335', category: 'Advertising',   riskTier: 'high'     },
+  'youtube.com':             { parent: 'Alphabet (Google)', brand: 'YouTube',                color: '#FF0000', category: 'Media',         riskTier: 'low'      },
+  'ytimg.com':               { parent: 'Alphabet (Google)', brand: 'YouTube CDN',            color: '#FF0000', category: 'Infrastructure',riskTier: 'low'      },
+  'ggpht.com':               { parent: 'Alphabet (Google)', brand: 'Google',                 color: '#4285F4', category: 'Infrastructure',riskTier: 'low'      },
 
-  // ── Meta ──────────────────────────────────────────────────────────────────
-  'facebook.net':            { parent: 'Meta Platforms',    brand: 'Meta Pixel',         color: '#1877F2', category: 'Advertising'  },
-  'facebook.com':            { parent: 'Meta Platforms',    brand: 'Facebook',           color: '#1877F2', category: 'Social'       },
-  'instagram.com':           { parent: 'Meta Platforms',    brand: 'Instagram',          color: '#E4405F', category: 'Social'       },
-  'whatsapp.com':            { parent: 'Meta Platforms',    brand: 'WhatsApp',           color: '#25D366', category: 'Messaging'    },
-  'fbcdn.net':               { parent: 'Meta Platforms',    brand: 'Facebook CDN',       color: '#1877F2', category: 'Infrastructure'},
+  // ── Meta Platforms ────────────────────────────────────────────────────────
+  'facebook.net':            { parent: 'Meta Platforms',    brand: 'Meta Pixel',             color: '#1877F2', category: 'Advertising',   riskTier: 'high'     },
+  'facebook.com':            { parent: 'Meta Platforms',    brand: 'Facebook',               color: '#1877F2', category: 'Social',        riskTier: 'medium'   },
+  'instagram.com':           { parent: 'Meta Platforms',    brand: 'Instagram',              color: '#E4405F', category: 'Social',        riskTier: 'medium'   },
+  'fbcdn.net':               { parent: 'Meta Platforms',    brand: 'Facebook CDN',           color: '#1877F2', category: 'Infrastructure',riskTier: 'low'      },
 
   // ── Microsoft ─────────────────────────────────────────────────────────────
-  'bing.com':                { parent: 'Microsoft',         brand: 'Bing Ads',           color: '#00A4EF', category: 'Advertising'  },
-  'clarity.ms':              { parent: 'Microsoft',         brand: 'Microsoft Clarity',  color: '#00A4EF', category: 'Analytics'    },
-  'linkedin.com':            { parent: 'Microsoft',         brand: 'LinkedIn',           color: '#0A66C2', category: 'Social'       },
-  'licdn.com':               { parent: 'Microsoft',         brand: 'LinkedIn CDN',       color: '#0A66C2', category: 'Infrastructure'},
-  'bat.bing.com':            { parent: 'Microsoft',         brand: 'Bing Tracking',      color: '#00A4EF', category: 'Advertising'  },
+  'bing.com':                { parent: 'Microsoft',         brand: 'Bing Ads',               color: '#00A4EF', category: 'Advertising',   riskTier: 'high'     },
+  'clarity.ms':              { parent: 'Microsoft',         brand: 'Microsoft Clarity',      color: '#00A4EF', category: 'Session Replay',riskTier: 'high'     },
+  'linkedin.com':            { parent: 'Microsoft',         brand: 'LinkedIn',               color: '#0A66C2', category: 'Social',        riskTier: 'medium'   },
+  'licdn.com':               { parent: 'Microsoft',         brand: 'LinkedIn CDN',           color: '#0A66C2', category: 'Infrastructure',riskTier: 'low'      },
+  'bat.bing.com':            { parent: 'Microsoft',         brand: 'Bing Tracking',          color: '#00A4EF', category: 'Advertising',   riskTier: 'high'     },
 
-  // ── Twitter / X ───────────────────────────────────────────────────────────
-  'twitter.com':             { parent: 'X Corp',            brand: 'Twitter/X',          color: '#1DA1F2', category: 'Social'       },
-  'ads-twitter.com':         { parent: 'X Corp',            brand: 'Twitter Ads',        color: '#1DA1F2', category: 'Advertising'  },
-  'twimg.com':               { parent: 'X Corp',            brand: 'Twitter CDN',        color: '#1DA1F2', category: 'Infrastructure'},
+  // ── X Corp ────────────────────────────────────────────────────────────────
+  'twitter.com':             { parent: 'X Corp',            brand: 'Twitter/X',              color: '#1DA1F2', category: 'Social',        riskTier: 'medium'   },
+  'ads-twitter.com':         { parent: 'X Corp',            brand: 'Twitter/X Ads',          color: '#1DA1F2', category: 'Advertising',   riskTier: 'high'     },
+  'twimg.com':               { parent: 'X Corp',            brand: 'Twitter CDN',            color: '#1DA1F2', category: 'Infrastructure',riskTier: 'low'      },
 
   // ── Amazon ────────────────────────────────────────────────────────────────
-  'amazon-adsystem.com':     { parent: 'Amazon',            brand: 'Amazon Ads',         color: '#FF9900', category: 'Advertising'  },
-  'advertising.amazon.com':  { parent: 'Amazon',            brand: 'Amazon DSP',         color: '#FF9900', category: 'Advertising'  },
+  'amazon-adsystem.com':     { parent: 'Amazon',            brand: 'Amazon Ads',             color: '#FF9900', category: 'Advertising',   riskTier: 'high'     },
+  'advertising.amazon.com':  { parent: 'Amazon',            brand: 'Amazon DSP',             color: '#FF9900', category: 'Advertising',   riskTier: 'high'     },
 
-  // ── Hotjar ────────────────────────────────────────────────────────────────
-  'hotjar.com':              { parent: 'Hotjar Ltd',        brand: 'Hotjar',             color: '#FD3A5C', category: 'Session Replay'},
-  'static.hotjar.com':       { parent: 'Hotjar Ltd',        brand: 'Hotjar',             color: '#FD3A5C', category: 'Session Replay'},
+  // ── Session Replay ────────────────────────────────────────────────────────
+  'hotjar.com':              { parent: 'Hotjar Ltd',        brand: 'Hotjar',                 color: '#FD3A5C', category: 'Session Replay',riskTier: 'high'     },
+  'static.hotjar.com':       { parent: 'Hotjar Ltd',        brand: 'Hotjar',                 color: '#FD3A5C', category: 'Session Replay',riskTier: 'high'     },
+  'fullstory.com':           { parent: 'FullStory Inc',     brand: 'FullStory',              color: '#1ABC9C', category: 'Session Replay',riskTier: 'high'     },
+  'logrocket.com':           { parent: 'LogRocket Inc',     brand: 'LogRocket',              color: '#764ABC', category: 'Session Replay',riskTier: 'high'     },
+  'mouseflow.com':           { parent: 'Mouseflow ApS',     brand: 'Mouseflow',              color: '#E91E63', category: 'Session Replay',riskTier: 'high'     },
+  'smartlook.com':           { parent: 'Smartlook s.r.o.',  brand: 'Smartlook',              color: '#00B4D8', category: 'Session Replay',riskTier: 'high'     },
+  'luckyorange.com':         { parent: 'Lucky Orange LLC',  brand: 'Lucky Orange',           color: '#FFA500', category: 'Session Replay',riskTier: 'high'     },
 
-  // ── Segment / Twilio ──────────────────────────────────────────────────────
-  'segment.io':              { parent: 'Twilio (Segment)',  brand: 'Segment',            color: '#52BD94', category: 'Analytics'    },
-  'segment.com':             { parent: 'Twilio (Segment)',  brand: 'Segment',            color: '#52BD94', category: 'Analytics'    },
+  // ── Identity Resolution / Data Brokers ────────────────────────────────────
+  'criteo.com':              { parent: 'Criteo SA',         brand: 'Criteo',                 color: '#F5A623', category: 'Identity Resolution', riskTier: 'high' },
+  'criteo.net':              { parent: 'Criteo SA',         brand: 'Criteo',                 color: '#F5A623', category: 'Identity Resolution', riskTier: 'high' },
+  'adsrvr.org':              { parent: 'The Trade Desk',    brand: 'The Trade Desk',         color: '#2B6CB0', category: 'Identity Resolution', riskTier: 'high' },
+  'id5-sync.com':            { parent: 'ID5',               brand: 'ID5 Identity',           color: '#7B2FBE', category: 'Identity Resolution', riskTier: 'high' },
+  'liveramp.com':            { parent: 'LiveRamp',          brand: 'LiveRamp',               color: '#E53935', category: 'Data Broker',   riskTier: 'critical' },
+  'adnxs.com':               { parent: 'Xandr (Microsoft)', brand: 'Xandr/AppNexus',         color: '#0078D4', category: 'Advertising',   riskTier: 'high'     },
+  'rubiconproject.com':      { parent: 'Magnite',           brand: 'Rubicon Project',        color: '#E63946', category: 'Advertising',   riskTier: 'high'     },
+  'pubmatic.com':            { parent: 'PubMatic',          brand: 'PubMatic',               color: '#457B9D', category: 'Advertising',   riskTier: 'high'     },
 
-  // ── Mixpanel ──────────────────────────────────────────────────────────────
-  'mixpanel.com':            { parent: 'Mixpanel Inc',      brand: 'Mixpanel',           color: '#7856FF', category: 'Analytics'    },
+  // ── Behavioral Analytics ──────────────────────────────────────────────────
+  'segment.io':              { parent: 'Twilio (Segment)',  brand: 'Segment',                color: '#52BD94', category: 'Analytics',     riskTier: 'medium'   },
+  'segment.com':             { parent: 'Twilio (Segment)',  brand: 'Segment',                color: '#52BD94', category: 'Analytics',     riskTier: 'medium'   },
+  'mixpanel.com':            { parent: 'Mixpanel Inc',      brand: 'Mixpanel',               color: '#7856FF', category: 'Analytics',     riskTier: 'medium'   },
+  'amplitude.com':           { parent: 'Amplitude Inc',     brand: 'Amplitude',              color: '#2E86AB', category: 'Analytics',     riskTier: 'medium'   },
+  'cdn.amplitude.com':       { parent: 'Amplitude Inc',     brand: 'Amplitude',              color: '#2E86AB', category: 'Analytics',     riskTier: 'medium'   },
+  'heap.io':                 { parent: 'Heap Inc',          brand: 'Heap Analytics',         color: '#6B48FF', category: 'Analytics',     riskTier: 'medium'   },
 
-  // ── Amplitude ─────────────────────────────────────────────────────────────
-  'amplitude.com':           { parent: 'Amplitude Inc',     brand: 'Amplitude',          color: '#2E86AB', category: 'Analytics'    },
-  'cdn.amplitude.com':       { parent: 'Amplitude Inc',     brand: 'Amplitude',          color: '#2E86AB', category: 'Analytics'    },
+  // ── Advertising ───────────────────────────────────────────────────────────
+  'outbrain.com':            { parent: 'Outbrain Inc',      brand: 'Outbrain',               color: '#FF6B35', category: 'Advertising',   riskTier: 'medium'   },
+  'taboola.com':             { parent: 'Taboola Inc',       brand: 'Taboola',                color: '#5B4FE9', category: 'Advertising',   riskTier: 'medium'   },
+  'quantserve.com':          { parent: 'Quantcast Corp',    brand: 'Quantcast',              color: '#00B4D8', category: 'Advertising',   riskTier: 'high'     },
+  'scorecardresearch.com':   { parent: 'Comscore Inc',      brand: 'Comscore',               color: '#2C3E50', category: 'Analytics',     riskTier: 'medium'   },
+  'moatads.com':             { parent: 'Oracle Data Cloud', brand: 'Moat Analytics',         color: '#F80000', category: 'Analytics',     riskTier: 'medium'   },
 
-  // ── Criteo ────────────────────────────────────────────────────────────────
-  'criteo.com':              { parent: 'Criteo SA',         brand: 'Criteo',             color: '#F5A623', category: 'Advertising'  },
-  'criteo.net':              { parent: 'Criteo SA',         brand: 'Criteo',             color: '#F5A623', category: 'Advertising'  },
-
-  // ── The Trade Desk ────────────────────────────────────────────────────────
-  'adsrvr.org':              { parent: 'The Trade Desk',    brand: 'The Trade Desk',     color: '#2B6CB0', category: 'Advertising'  },
-
-  // ── Outbrain / Taboola ────────────────────────────────────────────────────
-  'outbrain.com':            { parent: 'Outbrain Inc',      brand: 'Outbrain',           color: '#FF6B35', category: 'Advertising'  },
-  'taboola.com':             { parent: 'Taboola Inc',       brand: 'Taboola',            color: '#5B4FE9', category: 'Advertising'  },
-
-  // ── Quantcast ─────────────────────────────────────────────────────────────
-  'quantserve.com':          { parent: 'Quantcast Corp',    brand: 'Quantcast',          color: '#00B4D8', category: 'Advertising'  },
-
-  // ── Comscore ──────────────────────────────────────────────────────────────
-  'scorecardresearch.com':   { parent: 'Comscore Inc',      brand: 'Comscore',           color: '#2C3E50', category: 'Analytics'    },
-
-  // ── Hubspot ───────────────────────────────────────────────────────────────
-  'hubspot.com':             { parent: 'HubSpot Inc',       brand: 'HubSpot',            color: '#FF7A59', category: 'Marketing'    },
-  'hs-scripts.com':          { parent: 'HubSpot Inc',       brand: 'HubSpot',            color: '#FF7A59', category: 'Marketing'    },
-
-  // ── FullStory ─────────────────────────────────────────────────────────────
-  'fullstory.com':           { parent: 'FullStory Inc',     brand: 'FullStory',          color: '#1ABC9C', category: 'Session Replay'},
-  'rs6.net':                 { parent: 'Constant Contact',  brand: 'Constant Contact',   color: '#5BA4CF', category: 'Marketing'    },
-
-  // ── Intercom ──────────────────────────────────────────────────────────────
-  'intercom.io':             { parent: 'Intercom Inc',      brand: 'Intercom',           color: '#6AFDEF', category: 'Support'      },
-  'intercomcdn.com':         { parent: 'Intercom Inc',      brand: 'Intercom CDN',       color: '#6AFDEF', category: 'Infrastructure'},
+  // ── Marketing / Functional ─────────────────────────────────────────────────
+  'hubspot.com':             { parent: 'HubSpot Inc',       brand: 'HubSpot',                color: '#FF7A59', category: 'Marketing',     riskTier: 'low'      },
+  'hs-scripts.com':          { parent: 'HubSpot Inc',       brand: 'HubSpot',                color: '#FF7A59', category: 'Marketing',     riskTier: 'low'      },
+  'intercom.io':             { parent: 'Intercom Inc',      brand: 'Intercom',               color: '#6AFDEF', category: 'Support',       riskTier: 'low'      },
+  'intercomcdn.com':         { parent: 'Intercom Inc',      brand: 'Intercom CDN',           color: '#6AFDEF', category: 'Infrastructure',riskTier: 'low'      },
+  'zendesk.com':             { parent: 'Zendesk Inc',       brand: 'Zendesk',                color: '#03363D', category: 'Support',       riskTier: 'low'      },
+  'zdassets.com':            { parent: 'Zendesk Inc',       brand: 'Zendesk CDN',            color: '#03363D', category: 'Infrastructure',riskTier: 'low'      },
 };
 
-/**
- * Find ownership info for a given hostname.
- * Checks exact match and suffix match (e.g. sub.domain.com → domain.com).
- */
+// Risk tier color for graph nodes
+const RISK_TIER_BORDER = {
+  critical: '#c85a3a',
+  high:     '#d4a040',
+  medium:   '#c4a869',
+  low:      '#5a9e6a',
+};
+
 function findOwnership(hostname) {
   if (DOMAIN_OWNERSHIP[hostname]) return DOMAIN_OWNERSHIP[hostname];
-
-  // Try stripping subdomains
   const parts = hostname.split('.');
   for (let i = 1; i < parts.length - 1; i++) {
     const candidate = parts.slice(i).join('.');
@@ -107,90 +107,104 @@ function findOwnership(hostname) {
 }
 
 /**
- * Build the ownership graph from a list of external domains.
+ * Build the ownership graph from external domains.
+ * Optionally enriches unknown domains with ASN-based corporate inference.
  *
- * Returns:
- *  - nodes: companies + the site itself
- *  - edges: site → company connections
- *  - corporateConcentration: % of trackers owned by top 3 companies
+ * @param {string[]}  externalDomains   - All external hostnames from the crawl
+ * @param {string}    siteUrl           - The site being analyzed
+ * @param {Object}    asnResults        - Pre-computed ASN results from crawler
+ *                                        (Map of domain → { asn, corporation })
  */
-export function buildOwnershipGraph(externalDomains, siteUrl) {
+export function buildOwnershipGraph(externalDomains, siteUrl, asnResults = {}) {
   const siteHostname = (() => { try { return new URL(siteUrl).hostname; } catch { return siteUrl; } })();
-
-  // Map parent company → their domains found on this site
-  const companyMap = new Map();
+  const companyMap   = new Map();
 
   for (const domain of externalDomains) {
-    const ownership = findOwnership(domain);
+    let ownership = findOwnership(domain);
+
+    // Fallback: use ASN-based corporate inference from crawler
+    if (!ownership && asnResults[domain]) {
+      const asn = asnResults[domain];
+      if (asn.corporation && asn.corporation !== 'Unknown') {
+        ownership = {
+          parent:    asn.corporation,
+          brand:     domain,
+          color:     '#888888',
+          category:  'Infrastructure',
+          riskTier:  'low',
+          asnInferred: true,
+          asn:       asn.asn,
+        };
+      }
+    }
+
     if (!ownership) continue;
 
     if (!companyMap.has(ownership.parent)) {
       companyMap.set(ownership.parent, {
-        parent: ownership.parent,
-        color: ownership.color,
-        domains: [],
-        categories: new Set(),
+        parent:      ownership.parent,
+        color:       ownership.color,
+        riskTier:    ownership.riskTier || 'low',
+        domains:     [],
+        categories:  new Set(),
+        asnInferred: ownership.asnInferred || false,
       });
     }
+
     const entry = companyMap.get(ownership.parent);
-    entry.domains.push({ domain, brand: ownership.brand, category: ownership.category });
+    entry.domains.push({ domain, brand: ownership.brand, category: ownership.category, riskTier: ownership.riskTier });
     entry.categories.add(ownership.category);
+    // Upgrade riskTier to highest seen for this parent
+    const tierOrder = { critical: 3, high: 2, medium: 1, low: 0 };
+    if ((tierOrder[ownership.riskTier] || 0) > (tierOrder[entry.riskTier] || 0)) {
+      entry.riskTier = ownership.riskTier;
+    }
   }
 
-  // Build nodes array
-  // Node 0 is always the site being analyzed
   const nodes = [
-    {
-      id: 'site',
-      label: siteHostname,
-      type: 'site',
-      color: '#00ff88',
-      size: 20,
-    },
+    { id: 'site', label: siteHostname, type: 'site', color: '#00ff88', size: 20 },
     ...[...companyMap.entries()].map(([parent, info], i) => ({
-      id: `company_${i}`,
-      label: parent,
-      type: 'company',
-      color: info.color,
-      size: 10 + info.domains.length * 3,
-      domains: info.domains,
-      categories: [...info.categories],
+      id:          `company_${i}`,
+      label:       parent,
+      type:        'company',
+      color:       info.color,
+      borderColor: RISK_TIER_BORDER[info.riskTier] || '#c4a869',
+      size:        10 + info.domains.length * 3,
+      domains:     info.domains,
+      categories:  [...info.categories],
       domainCount: info.domains.length,
+      riskTier:    info.riskTier,
+      asnInferred: info.asnInferred || false,
     })),
   ];
 
-  // Build edges: site → each company
   const edges = nodes
     .filter((n) => n.type === 'company')
-    .map((n) => ({
-      source: 'site',
-      target: n.id,
-      label: n.domains.map((d) => d.brand).join(', '),
-    }));
+    .map((n) => ({ source: 'site', target: n.id, label: n.domains.map((d) => d.brand).join(', ') }));
 
-  // Corporate concentration: what % of identified companies are top 3?
-  const sorted = [...companyMap.values()].sort((a, b) => b.domains.length - a.domains.length);
+  const sorted      = [...companyMap.values()].sort((a, b) => b.domains.length - a.domains.length);
   const totalDomains = [...companyMap.values()].reduce((s, c) => s + c.domains.length, 0);
-  const top3Domains = sorted.slice(0, 3).reduce((s, c) => s + c.domains.length, 0);
+  const top3Domains  = sorted.slice(0, 3).reduce((s, c) => s + c.domains.length, 0);
 
-  // Category breakdown
   const categoryCount = {};
+  const riskTierCount = { critical: 0, high: 0, medium: 0, low: 0 };
   for (const company of companyMap.values()) {
-    for (const cat of company.categories) {
-      categoryCount[cat] = (categoryCount[cat] || 0) + 1;
-    }
+    for (const cat of company.categories) categoryCount[cat] = (categoryCount[cat] || 0) + 1;
+    riskTierCount[company.riskTier] = (riskTierCount[company.riskTier] || 0) + 1;
   }
 
   return {
     nodes,
     edges,
     stats: {
-      totalCompanies: companyMap.size,
-      identifiedDomains: totalDomains,
-      unknownDomains: externalDomains.length - totalDomains,
+      totalCompanies:         companyMap.size,
+      identifiedDomains:      totalDomains,
+      unknownDomains:         externalDomains.length - totalDomains,
       corporateConcentration: totalDomains > 0 ? Math.round((top3Domains / totalDomains) * 100) : 0,
-      topCompanies: sorted.slice(0, 3).map((c) => ({ name: c.parent, domains: c.domains.length })),
-      categoryBreakdown: categoryCount,
+      topCompanies:           sorted.slice(0, 3).map((c) => ({ name: c.parent, domains: c.domains.length, riskTier: c.riskTier })),
+      categoryBreakdown:      categoryCount,
+      riskTierBreakdown:      riskTierCount,
+      asnInferredCount:       [...companyMap.values()].filter((c) => c.asnInferred).length,
     },
   };
 }

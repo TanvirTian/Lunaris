@@ -1,14 +1,3 @@
-/**
- * Fastify Server — with Prometheus HTTP instrumentation middleware
- * ─────────────────────────────────────────────────────────────────────────────
- * Added in v2:
- *   - onRequest hook records request start time
- *   - onResponse hook records duration and increments http_requests_total
- *   - Route normalization prevents high-cardinality label explosion
- *     (e.g. /scan/uuid1, /scan/uuid2 → /scan/:id)
- * ─────────────────────────────────────────────────────────────────────────────
- */
-
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
