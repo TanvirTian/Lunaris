@@ -1,26 +1,3 @@
-/**
- * POST /analyze
- * ─────────────────────────────────────────────────────────────────────────────
- * Accepts a URL, checks the 24-hour domain cache, and either returns cached
- * data immediately (with a small UX delay) or enqueues a fresh crawl.
- *
- * Cache architecture:
- *   Layer 1: DomainScan (PostgreSQL) — 24h window, single row per domain
- *   Layer 2: Redis NX lock — prevents duplicate crawls for in-flight scans
- *
- * UX delay on cache hits:
- *   Returns cached results after 300–600ms. This lives in the BACKEND because:
- *   1. The frontend cannot reliably distinguish cache hits from fresh results
- *      without trusting a client-side header that could be spoofed.
- *   2. Centralizing the delay in one place means it applies to ALL clients
- *      (web, mobile, API consumers) consistently.
- *   3. The delay is intentionally randomized to avoid a "mechanical" feel
- *      that would make the artificial pause obvious to developers.
- *   Frontend role: show a loading indicator from request start to response —
- *   it does NOT need to implement any delay logic itself.
- * ─────────────────────────────────────────────────────────────────────────────
- */
-
 import { db } from '../lib/db.js';
 import { scanQueue } from '../lib/queue.js';
 import { logger } from '../lib/logger.js';

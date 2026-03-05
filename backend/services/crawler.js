@@ -2,35 +2,6 @@ import { chromium } from 'playwright';
 import { lookup, Resolver } from 'dns/promises';
 import { isIP } from 'net';
 
-/**
- * ADVANCED Privacy Crawler — Production Upgrade
- * ─────────────────────────────────────────────────────────────────────────────
- * Upgrades over previous version:
- *
- *  Detection improvements:
- *  20. Entropy-based fingerprint uniqueness tracking (bits accumulated per API)
- *  21. Audio fingerprinting detection (AnalyserNode / OfflineAudioContext)
- *  22. Hardware property fingerprinting (deviceMemory, hardwareConcurrency)
- *  23. Media device enumeration (camera/mic IDs — no permission needed)
- *  24. Battery API fingerprinting detection
- *  25. Timing-based keystroke capture (high-frequency rAF loop detection)
- *  26. MutationObserver-based form harvesting detection
- *  27. Autofill capture detection (field reads before user interaction)
- *  28. Combined fingerprint cluster detection (3+ APIs in 500ms = attack)
- *  29. Timezone probing detection
- *  30. Context detection (login forms, password fields, payment forms)
- *  31. Payload-level PII detection (email, hashed email, canvas hash, session ID)
- *
- *  Performance improvements:
- *  32. Block images/CSS/fonts (40-60% faster per page — zero signal lost)
- *  33. Parallel sub-page crawling with concurrency limit
- *  34. 4KB payload capture cap (prevents OOM on large POST bodies)
- *
- *  Crawler intelligence:
- *  35. High-value page scoring (login/checkout/account crawled first)
- *  36. ASN-based corporate inference for unknown tracker domains
- * ─────────────────────────────────────────────────────────────────────────────
- */
 
 const MAX_PAGES          = 4;
 const CRAWL_CONCURRENCY  = 2;

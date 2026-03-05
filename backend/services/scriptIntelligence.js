@@ -1,19 +1,3 @@
-/**
- * Script Intelligence Service — Production Upgrade
- * ─────────────────────────────────────────────────────────────────────────────
- * Downloads and deeply analyzes external JavaScript files. Upgrades over
- * previous version:
- *
- *  - Keystroke exfiltration patterns (timestamped arrays, delta timing, beacons)
- *  - Fingerprint hash transmission patterns (canvas hash in fetch/XHR)
- *  - Hashed PII detection (SHA256/MD5 email patterns)
- *  - Session replay markers (rrweb, Hotjar chunk format)
- *  - More obfuscation signatures (proxy traps, eval chains, self-defending code)
- *  - ML-ready feature vector extraction per script
- *    (entropy, token density, API call counts — for future classifier)
- * ─────────────────────────────────────────────────────────────────────────────
- */
-
 import { createHash } from 'crypto';
 
 const KNOWN_BAD_HASHES = new Set([

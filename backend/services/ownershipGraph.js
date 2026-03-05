@@ -1,17 +1,3 @@
-/**
- * Company Ownership Graph — Production Upgrade
- * ─────────────────────────────────────────────────────────────────────────────
- * Upgrades over previous version:
- *
- *  - ASN-based corporate inference for unknown domains
- *    (uses Team Cymru IP-to-ASN DNS, no API key needed)
- *  - Expanded DOMAIN_OWNERSHIP with data brokers, identity resolution,
- *    and session replay companies
- *  - Risk tier classification per company category
- *  - Cross-site tracker signal: domains appearing across many sites
- * ─────────────────────────────────────────────────────────────────────────────
- */
-
 const DOMAIN_OWNERSHIP = {
   // ── Alphabet / Google ──────────────────────────────────────────────────────
   'google-analytics.com':    { parent: 'Alphabet (Google)', brand: 'Google Analytics',       color: '#4285F4', category: 'Analytics',     riskTier: 'medium'   },

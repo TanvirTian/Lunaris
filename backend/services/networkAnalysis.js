@@ -1,22 +1,3 @@
-/**
- * Network Analysis Service
- * ─────────────────────────────────────────────────────────────────────────────
- * Analyzes outbound network requests at payload level — not just where data
- * goes, but WHAT is being sent. Detects:
- *  - PII in request bodies (email, hashed email, session IDs)
- *  - Canvas/fingerprint hashes being transmitted
- *  - Behavioral analytics payloads (mouse/scroll/interaction streams)
- *  - Session replay data transmission (rrweb and equivalents)
- *  - Keystroke data exfiltration
- *  - Corporate tracker category classification
- *
- * Called from analyzer.js after crawl completes.
- * Input: raw allRequests array from crawler
- * Output: structured network findings used by scoring + signals
- * ─────────────────────────────────────────────────────────────────────────────
- */
-
-// ── Payload-level sensitive data patterns ─────────────────────────────────────
 // Checked against both URL params and POST body of every outbound request.
 const PAYLOAD_PATTERNS = [
   {

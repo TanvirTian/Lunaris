@@ -1,11 +1,3 @@
-/**
- * Health + Metrics Routes
- * ─────────────────────────────────────────────────────────────────────────────
- * GET /health  — liveness + readiness probe (used by Docker, Kubernetes, etc.)
- * GET /metrics — Prometheus metrics exposition endpoint
- * ─────────────────────────────────────────────────────────────────────────────
- */
-
 import { checkDbHealth } from '../lib/db.js';
 import { redis } from '../lib/redis.js';
 import { getQueueMetrics } from '../lib/queue.js';
@@ -56,15 +48,6 @@ export default async function healthRoute(fastify) {
 
 
   // ── GET /metrics ─────────────────────────────────────────────────────────────
-  // Prometheus metrics endpoint. Scraped by the Prometheus container defined
-  // in docker-compose.yml every 15 seconds.
-  //
-  // Security note for production:
-  //   This endpoint exposes operational data. In production, either:
-  //     a) Restrict via network policy (only Prometheus pod can reach it)
-  //     b) Add a secret token check: if (request.headers['x-metrics-token'] !== process.env.METRICS_TOKEN) ...
-  //     c) Run a separate metrics-only port (prom-client supports this via pushgateway)
-  //   For local development the endpoint is open — that's intentional.
   fastify.get('/metrics', {
     config: { rateLimit: { skip: true } },
   }, async (_request, reply) => {
