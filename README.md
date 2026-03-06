@@ -42,7 +42,9 @@ Scans are processed asynchronously. The API returns a job ID immediately and the
 | Database | PostgreSQL 16 | Permanent storage, JSONB result blobs |
 | Queue | BullMQ + Redis 7 | Async job processing, retries, DLQ |
 | Crawler | Playwright + Chromium | Headless browser, fingerprint detection |
+| Monitoring & Observability | Prometheus + Grafana| Metrics collection, system health monitoring, and performance visualization|
 | Frontend | React 18 + Vite | UI, result polling |
+
 
 
 ## Project Structure
