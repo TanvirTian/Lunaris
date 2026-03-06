@@ -3,7 +3,9 @@
 
 **Privacy analysis engine for the modern web.**
 
-Lunaris scans any public URL and surfaces trackers, cookies, fingerprinting vectors, third-party data flows, and dark patterns — processed asynchronously through a production-grade queue architecture.
+Lunaris helps you see what websites are really doing behind the scenes.
+
+Instead of guessing how your data is being collected, Lunaris automatically visits a website and analyzes how it behaves, finding trackers, data leaks, and privacy risks in real time using automated browser-based analysis.
 
 [![Node.js](https://img.shields.io/badge/Node.js-20-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
 [![Fastify](https://img.shields.io/badge/Fastify-4-000000?style=flat-square&logo=fastify&logoColor=white)](https://fastify.dev)
