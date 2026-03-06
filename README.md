@@ -123,10 +123,7 @@ Scans are processed asynchronously. The API returns a job ID immediately and the
 
 ## Docker Setup (Recommended)
 
-Lunaris runs entirely via Docker Compose.
-No local Node.js, PostgreSQL, or Redis installation is required.
-
-All runtime configuration is defined directly in `docker-compose.yml`. No `.env` files are needed.
+Spin it up with Docker Compose and you’re ready to go. No wrestling with databases, no installing runtimes, no configuration headaches.
 
 ### Quick Start
 
