@@ -4,14 +4,6 @@ import { buildOwnershipGraph }    from './ownershipGraph.js';
 import { calculateWeightedScore } from './scoring.js';
 import { analyzeNetworkPayloads } from './networkAnalysis.js';
 
-/**
- * Privacy Analysis Engine — Production Upgrade
- * ─────────────────────────────────────────────────────────────────────────────
- * Replaces flat deduction scoring with weighted risk model.
- * Wires all new crawler signals into scoring + UI signal list.
- * Integrates network payload analysis for payload-level privacy violations.
- * ─────────────────────────────────────────────────────────────────────────────
- */
 
 const CDN_ALLOWLIST = [
   'gstatic.com','googleapis.com','fonts.googleapis.com','fonts.gstatic.com',

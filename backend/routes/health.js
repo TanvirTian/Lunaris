@@ -5,13 +5,6 @@ import { metrics } from '../lib/metrics.js';
 
 export default async function healthRoute(fastify) {
 
-  // ── GET /health ─────────────────────────────────────────────────────────────
-  // Returns 200 when the service is healthy, 503 when degraded.
-  // Used by:
-  //   - Docker Compose healthcheck
-  //   - Load balancer health probes
-  //   - Kubernetes liveness/readiness probes
-  //   - Uptime monitoring (Uptime Robot, Betterstack, etc.)
   fastify.get('/health', {
     // Skip rate limiting for health probes — they come from infrastructure,
     // not users, and should never be throttled.

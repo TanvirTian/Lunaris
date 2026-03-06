@@ -78,7 +78,6 @@ fastify.addHook('onRequest', (request, reply, done) => {
 await fastify.register(analyzeRoute);
 await fastify.register(scanRoutes);
 await fastify.register(healthRoute);
-console.log(fastify.printRoutes());
 
 // ── 404 handler ───────────────────────────────────────────────────────────────
 fastify.setNotFoundHandler((request, reply) => {
