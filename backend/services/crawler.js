@@ -194,6 +194,15 @@ const FINGERPRINT_DETECTOR_SCRIPT = `
       return origGetParam.apply(this, a);
     };
   }
+  // WebGL2 is the modern default and used exclusively by many current trackers.
+  // Patching only WebGLRenderingContext misses all WebGL2 fingerprint attempts.
+  if (typeof WebGL2RenderingContext !== 'undefined') {
+    const origGetParam2 = WebGL2RenderingContext.prototype.getParameter;
+    WebGL2RenderingContext.prototype.getParameter = function(...a) {
+      S.webglFingerprint = true; addEntropy('webgl2_params', 3.0);
+      return origGetParam2.apply(this, a);
+    };
+  }
 
   // ── Font fingerprinting ─────────────────────────────────────────────────
   if (document.fonts && document.fonts.check) {
@@ -247,6 +256,35 @@ const FINGERPRINT_DETECTOR_SCRIPT = `
       S.batteryFingerprint = true; addEntropy('battery', 4.0);
       return orig();
     };
+  }
+
+  // ── Screen property fingerprinting ────────────────────────────────────
+  // Screen dimensions (width, height, colorDepth, pixelDepth) are a standard
+  // high-entropy fingerprinting input. Legitimate page rendering never needs
+  // to read these via property getters directly on Screen.prototype.
+  if (typeof Screen !== 'undefined') {
+    ['width', 'height', 'colorDepth', 'pixelDepth', 'availWidth', 'availHeight'].forEach(function(prop) {
+      const desc = Object.getOwnPropertyDescriptor(Screen.prototype, prop);
+      if (!desc || !desc.get) return;
+      Object.defineProperty(Screen.prototype, prop, {
+        get: function() { S.hardwareFingerprint = true; addEntropy('screen', 2.5); return desc.get.call(this); },
+        configurable: true,
+      });
+    });
+  }
+
+  // ── Network Information API fingerprinting ──────────────────────────────
+  // navigator.connection (effectiveType, rtt, downlink) is used to bucket
+  // users into network profiles, adding ~2 bits of fingerprint entropy.
+  if (navigator.connection) {
+    ['effectiveType', 'rtt', 'downlink'].forEach(function(prop) {
+      const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator.connection), prop);
+      if (!desc || !desc.get) return;
+      Object.defineProperty(Object.getPrototypeOf(navigator.connection), prop, {
+        get: function() { S.hardwareFingerprint = true; addEntropy('connection', 2.0); return desc.get.call(this); },
+        configurable: true,
+      });
+    });
   }
 
   // ── Timezone probing ────────────────────────────────────────────────────
@@ -330,11 +368,16 @@ const FINGERPRINT_DETECTOR_SCRIPT = `
   };
 
   // ── Beacon API ──────────────────────────────────────────────────────────
+  // Guard: sendBeacon is absent in some browser contexts and extensions may
+  // remove it. Calling .bind() on undefined would throw and break the injected
+  // script, silently disabling ALL detections that follow.
+  if (navigator.sendBeacon) {
   const origBeacon = navigator.sendBeacon.bind(navigator);
   navigator.sendBeacon = function(url, data) {
     S.beaconCalls.push({ url: url.toString().slice(0, 200), hasData: !!data });
     return origBeacon(url, data);
   };
+  } // end sendBeacon guard
 
   // ── Service Worker ──────────────────────────────────────────────────────
   if (navigator.serviceWorker) {
@@ -367,11 +410,12 @@ const HIGH_VALUE_PATHS = [
   { pattern: /\/(about|team|company|privacy|terms|legal)/i,                 score: 3  },
 ];
 
-function selectPagesToCrawl(internalLinks, sitemapUrls, baseHostname, max) {
+function selectPagesToCrawl(internalLinks, sitemapUrls, baseHostname, max, visitedUrls = new Set()) {
   const candidates = new Set([...sitemapUrls, ...internalLinks]);
   const scored = [];
   for (const url of candidates) {
     try {
+      if (visitedUrls.has(url)) continue; // don't re-crawl pages we already visited
       const u = new URL(url);
       if (u.hostname !== baseHostname) continue;
       const path = u.pathname.toLowerCase();
@@ -435,10 +479,13 @@ function inspectRequestPayload(url, postData) {
     }
   }
 
-  // Check both URL and body for sensitive patterns
-  const checkTarget = url + ' ' + body;
+  // Check URL and body separately.
+  // Concatenating them (url + ' ' + body) risks a regex matching across the
+  // boundary between the two strings, producing false positives on patterns
+  // like /session_id=[a-zA-Z0-9]{16,}/i when the id happens to span the join.
   for (const p of PAYLOAD_SENSITIVE_PATTERNS) {
-    if (p.pattern.test(checkTarget)) sensitivePayload.push({ label: p.label, risk: p.risk });
+    if (p.pattern.test(url) || (body && p.pattern.test(body)))
+      sensitivePayload.push({ label: p.label, risk: p.risk });
   }
 
   return { trackingParams, sensitivePayload };
@@ -459,10 +506,17 @@ const ASN_TO_CORPORATION = {
   'AS36351': 'SoftLayer (IBM)',
 };
 
-const _asnCache = new Map();
+const _asnCache    = new Map();
+const ASN_CACHE_MAX = 500; // ~80 KB worst-case; evict oldest when full
 
 export async function inferCorporateOwnerFromDomain(domain) {
   if (_asnCache.has(domain)) return _asnCache.get(domain);
+
+  // FIFO eviction: Maps preserve insertion order; deleting the first key
+  // removes the oldest entry. Keeps memory bounded without a full LRU.
+  if (_asnCache.size >= ASN_CACHE_MAX) {
+    _asnCache.delete(_asnCache.keys().next().value);
+  }
   try {
     const resolver = new Resolver();
     resolver.setServers(['8.8.8.8']);
@@ -539,6 +593,13 @@ async function crawlSinglePage(page, url, baseHostname, isHomepage = false) {
   const redirectChains = [];
   const sensitivePayloadFound = [];
 
+  // Split timeouts: navigation (goto, waitForNavigation) legitimately needs
+  // the full 25s window; evaluate() and waitForSelector() should fail faster.
+  // Using a single setDefaultTimeout(25s) for everything means a hung
+  // page.evaluate() holds the worker for 25s before throwing -- too long.
+  page.setDefaultNavigationTimeout(TIMEOUTS.navigation); // 25s for page loads
+  page.setDefaultTimeout(5_000);                         // 5s for evaluate/waitFor*
+
   // Block resource types that carry no privacy signal — 40–60% faster
   await page.route('**/*', (route) => {
     const type = route.request().resourceType();
@@ -570,11 +631,37 @@ async function crawlSinglePage(page, url, baseHostname, isHomepage = false) {
   try {
     response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: TIMEOUTS.navigation });
   } catch (err) {
-    throw new Error(`UNREACHABLE:PLAYWRIGHT_THROW:${err.message}`);
+    // Reclassify raw Playwright / Chromium net:: errors into clean, monitorable
+    // codes. The friendlyError() mapper in routes/analyze.js then converts these
+    // to user-readable messages without leaking internal detail.
+    const m = err.message || '';
+    if (/TimeoutError|timeout/i.test(m))                throw new Error(`UNREACHABLE:NAVIGATION_TIMEOUT:${url}`);
+    if (/ERR_NAME_NOT_RESOLVED/i.test(m))               throw new Error(`DNS_FAILED:ENOTFOUND:${url}`);
+    if (/ERR_CONNECTION_REFUSED/i.test(m))              throw new Error(`UNREACHABLE:CONNECTION_REFUSED:${url}`);
+    if (/ERR_CONNECTION_TIMED_OUT/i.test(m))            throw new Error(`UNREACHABLE:CONNECTION_TIMEOUT:${url}`);
+    if (/ERR_ADDRESS_UNREACHABLE|ERR_NETWORK_CHANGED/i.test(m)) throw new Error(`UNREACHABLE:ADDRESS_UNREACHABLE:${url}`);
+    if (/ERR_CERT_|SSL_ERROR|ERR_SSL/i.test(m))         throw new Error(`UNREACHABLE:TLS_ERROR:${url}`);
+    if (/ERR_EMPTY_RESPONSE/i.test(m))                  throw new Error(`UNREACHABLE:EMPTY_RESPONSE:${url}`);
+    if (/ERR_ABORTED/i.test(m))                         throw new Error(`UNREACHABLE:ABORTED:${url}`);
+    if (/ERR_BLOCKED_BY_CLIENT|ERR_BLOCKED_BY_RESPONSE/i.test(m)) throw new Error(`UNREACHABLE:BLOCKED:${url}`);
+    // Fallback: preserve original message for unknown errors
+    throw new Error(`UNREACHABLE:PLAYWRIGHT_THROW:${m}`);
   }
 
-  await Promise.race([page.waitForLoadState('load'), page.waitForTimeout(TIMEOUTS.pageSettle)]);
-  await page.waitForTimeout(TIMEOUTS.jsSettle);
+  // waitForLoadState can reject (page already unloaded, context closed mid-crawl).
+  // Without .catch(), that rejection would propagate out of Promise.race and
+  // abort the crawl even though the page may have loaded successfully.
+  await Promise.race([
+    page.waitForLoadState('load').catch(() => {}),
+    page.waitForTimeout(TIMEOUTS.pageSettle),
+  ]);
+
+  // Let post-load JS execute. Race against networkidle so fast pages don't
+  // always pay the full TIMEOUTS.jsSettle penalty.
+  await Promise.race([
+    page.waitForLoadState('networkidle').catch(() => {}),
+    page.waitForTimeout(TIMEOUTS.jsSettle),
+  ]);
   await detectNavigationFailure(page, response, requests, url, isHomepage);
 
   const fingerprintSignals = await page.evaluate(() => window.__privacySignals || {}).catch(() => ({}));
@@ -614,12 +701,19 @@ async function crawlPagesParallel(pagesToCrawl, context, baseHostname, concurren
   async function worker() {
     while (queue.length) {
       const pageUrl = queue.shift();
+      let page;
       try {
-        const page   = await context.newPage();
+        page         = await context.newPage();
         const result = await crawlSinglePage(page, pageUrl, baseHostname, false);
         results.push(result);
-        await page.close();
-      } catch (err) { console.warn(`Skipping ${pageUrl}: ${err.message}`); }
+      } catch (err) {
+        console.warn(`Skipping ${pageUrl}: ${err.message}`);
+      } finally {
+        // Always close the page — even when crawlSinglePage throws.
+        // Without this, a failed crawl leaks a Playwright Page handle,
+        // eventually exhausting the browser context's page limit.
+        await page?.close().catch(() => {});
+      }
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, pagesToCrawl.length)) }, worker));
@@ -652,14 +746,37 @@ export async function crawlWebsite(rawUrl) {
   try {
     // ── Homepage ────────────────────────────────────────────────────────────
     const homePage = await ctx.newPage();
-    homePage.on('response', (res) => { if (res.url() === url || res.url() === url + '/') responseHeaders = res.headers(); });
+
+    // Capture the main document's response headers for CSP analysis.
+    // Exact URL match misses common redirect patterns:
+    //   http://example.com  →  https://example.com
+    //   example.com         →  www.example.com
+    // Instead, accept the first 2xx response whose hostname matches the base
+    // hostname (with or without www), and ignore sub-resource responses.
+    let headersCaptured = false;
+    homePage.on('response', (res) => {
+      if (headersCaptured) return;
+      if (res.status() < 200 || res.status() >= 300) return;
+      try {
+        const resHost = new URL(res.url()).hostname;
+        const base    = hostname.replace(/^www./, '');
+        if (resHost === base || resHost === `www.${base}`) {
+          responseHeaders  = res.headers();
+          headersCaptured  = true;
+        }
+      } catch { /* non-parseable URL — skip */ }
+    });
 
     const homeResult = await crawlSinglePage(homePage, url, hostname, true);
     allPageResults.push(homeResult);
 
     const cspAnalysis  = analyzeCSP(responseHeaders);
     const sitemapUrls  = await fetchSitemapUrls(url, homePage);
-    const pagesToCrawl = selectPagesToCrawl(homeResult.internalLinks, sitemapUrls, hostname, MAX_PAGES - 1);
+    // Pass the homepage URL so it is excluded from sub-page candidates.
+    // Self-referential links (<a href="/">) are nearly universal; without this
+    // the homepage would appear in internalLinks and be scored and re-crawled.
+    const visitedUrls  = new Set([url, url.replace(/\/$/, ''), url + '/']);
+    const pagesToCrawl = selectPagesToCrawl(homeResult.internalLinks, sitemapUrls, hostname, MAX_PAGES - 1, visitedUrls);
     await homePage.close();
 
     // ── Sub-pages (parallel) ────────────────────────────────────────────────

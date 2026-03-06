@@ -1,12 +1,12 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import rateLimit from '@fastify/rate-limit';
 import { disconnectDb } from './lib/db.js';
 import { disconnectRedis } from './lib/redis.js';
 import { closeQueue } from './lib/queue.js';
 import { shutdownWorker, scanWorker } from './worker.js';
 import { logger } from './lib/logger.js';
 import { httpRequestsTotal, httpRequestDurationSeconds } from './lib/metrics.js';
+import { rateLimiter } from './lib/ratelimiter.js';
 import analyzeRoute from './routes/analyze.js';
 import scanRoutes   from './routes/scan.js';
 import healthRoute  from './routes/health.js';
@@ -16,32 +16,15 @@ const fastify = Fastify({
   logger:   false,
 });
 
-// ── Rate limiting ─────────────────────────────────────────────────────────────
-await fastify.register(rateLimit, {
-  max:        10,
-  timeWindow: '1 minute',
-  // Allow routes to opt-out via config: { rateLimit: { skip: true } }
-  // Used by /health and /metrics so infrastructure probes are never throttled
-  skipOnError: true,
-  keyGenerator: (request) => request.ip,
-  errorResponseBuilder: () => ({
-    error: 'Too many requests. Please wait a minute before scanning again.',
-  }),
-});
-
 // ── CORS ──────────────────────────────────────────────────────────────────────
 await fastify.register(cors, {
   origin:  process.env.CORS_ORIGIN || 'http://localhost:5173',
   methods: ['GET', 'POST', 'DELETE'],
 });
 
-// ── HTTP metrics middleware ───────────────────────────────────────────────────
-// Tracks all requests for Prometheus using start time stored on request object.
-//
-// Route normalization:
-//   UUID path params would create a unique label per request, causing
-//   Prometheus cardinality explosion (millions of time series).
-//   We normalize /scan/<uuid> → /scan/:id before recording labels.
+
+fastify.addHook('onRequest', rateLimiter);
+
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
@@ -95,6 +78,7 @@ fastify.addHook('onRequest', (request, reply, done) => {
 await fastify.register(analyzeRoute);
 await fastify.register(scanRoutes);
 await fastify.register(healthRoute);
+console.log(fastify.printRoutes());
 
 // ── 404 handler ───────────────────────────────────────────────────────────────
 fastify.setNotFoundHandler((request, reply) => {
