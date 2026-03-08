@@ -2,8 +2,6 @@ import { db } from '../lib/db.js';
 
 export default async function scanRoutes(fastify) {
 
-  // Primary polling endpoint. Clients call this after POST /analyze.
-  // Returns job metadata + result if SUCCESS, errorMessage if FAILED.
   fastify.get('/scan/:id', {
     schema: {
       params: {
@@ -53,9 +51,7 @@ export default async function scanRoutes(fastify) {
       });
     }
 
-    // SUCCESS — shape the result for the client
-    // rawData contains the full analyzer output; typed fields are also
-    // available directly for clients that want them without parsing rawData
+    
     const r = job.result;
     return reply.send({
       ...base,
@@ -76,7 +72,7 @@ export default async function scanRoutes(fastify) {
           font:    r.fontFingerprint,
           keylogger: r.keylogger,
         },
-        // Full analysis blob — trackers, cookies, signals, ownership graph, etc.
+        
         data:    r.rawData,
         createdAt: r.createdAt,
       },
@@ -84,17 +80,6 @@ export default async function scanRoutes(fastify) {
   });
 
 
-  // ── GET /scans ─────────────────────────────────────────────────────────────
-  // Paginated scan history. Used for:
-  //   - Showing a user their past scans
-  //   - Tracking score changes for a domain over time
-  //   - Admin dashboard / analytics
-  //
-  // Query params:
-  //   url      - filter by exact targetUrl
-  //   status   - filter by ScanStatus
-  //   page     - page number (1-indexed, default 1)
-  //   limit    - results per page (default 20, max 100)
   fastify.get('/scans', {
     schema: {
       querystring: {
@@ -156,9 +141,6 @@ export default async function scanRoutes(fastify) {
   });
 
 
-  // ── DELETE /scan/:id ───────────────────────────────────────────────────────
-  // Soft-cancel a PENDING job (before the crawler picks it up)
-  // or permanently delete a completed/failed job and its result.
   fastify.delete('/scan/:id', {
     schema: {
       params: {
@@ -187,7 +169,6 @@ export default async function scanRoutes(fastify) {
       });
     }
 
-    // Cascade delete removes ScanResult automatically (onDelete: Cascade)
     await db.scanJob.delete({ where: { id } });
 
     return reply.send({ deleted: true, jobId: id });

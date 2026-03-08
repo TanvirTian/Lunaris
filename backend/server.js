@@ -12,13 +12,16 @@ import scanRoutes   from './routes/scan.js';
 import healthRoute  from './routes/health.js';
 
 const fastify = Fastify({
-  genReqId: () => crypto.randomUUID(),
-  logger:   false,
+  genReqId:   () => crypto.randomUUID(),
+  logger:     false,
+  trustProxy: true,
 });
 
-// ── CORS ──────────────────────────────────────────────────────────────────────
+//  CORS 
 await fastify.register(cors, {
-  origin:  process.env.CORS_ORIGIN || 'http://localhost:5173',
+  origin: (process.env.CORS_ORIGIN || 'http://localhost:3000')
+    .split(',')
+    .map(o => o.trim()),
   methods: ['GET', 'POST', 'DELETE'],
 });
 
@@ -29,9 +32,7 @@ fastify.addHook('onRequest', rateLimiter);
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
 function normalizeRoute(url) {
-  // Strip query string
   const path = url.split('?')[0];
-  // Replace UUIDs with :id placeholder
   return path.replace(UUID_RE, ':id');
 }
 
