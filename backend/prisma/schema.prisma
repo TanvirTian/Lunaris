@@ -7,10 +7,8 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// =============================================================================
-// Enums
-// =============================================================================
 
+// Enums
 enum ScanStatus {
   PENDING   // Job created, queued, not yet picked up
   RUNNING   // Crawler is active right now
@@ -25,11 +23,9 @@ enum RiskLevel {
   HIGH      // score < 40
 }
 
-// =============================================================================
+
 // User
 // Stub model - userId is nullable on ScanJob so the app works without auth.
-// =============================================================================
-
 model User {
   id        String    @id @default(uuid()) @db.Uuid
   email     String    @unique
@@ -41,20 +37,17 @@ model User {
   @@map("users")
 }
 
-// =============================================================================
-// ScanJob
-//
-// Represents the intent to scan a URL and the lifecycle of that operation.
-// Deliberately separated from results:
-//   1. A job can FAIL — there may never be a result
-//   2. Retries create new job entries for accurate audit trails
-//   3. Queue systems (BullMQ) operate on jobs, not results
-// =============================================================================
 
+// ScanJob
 model ScanJob {
   id           String     @id @default(uuid()) @db.Uuid
   userId       String?    @db.Uuid
   targetUrl    String
+  // Canonical domain extracted from targetUrl (e.g. "example.com").
+  // Stored so dedup queries can use an exact index lookup instead of
+  // string-matching on targetUrl. Nullable for backwards compatibility
+  // with existing rows created before this column was added.
+  domain       String?
   status       ScanStatus @default(PENDING)
   errorMessage String?
   startedAt    DateTime?
@@ -66,22 +59,21 @@ model ScanJob {
   result       ScanResult?
 
   @@index([targetUrl])
+  @@index([domain])
   @@index([status])
   @@index([userId])
   @@index([createdAt(sort: Desc)])
   @@index([targetUrl, createdAt(sort: Desc)])
+  // Composite: covers the dedup query WHERE domain = ? AND status IN (...)
+  @@index([domain, status])
+  // Composite: covers worker polling WHERE status IN (...) ORDER BY createdAt
+  @@index([status, createdAt(sort: Desc)])
 
   @@map("scan_jobs")
 }
 
-// =============================================================================
-// ScanResult
-//
-// Stores the full analysis output for a specific job run.
-// Only exists when job.status = SUCCESS.
-// Preserved for historical analysis and score trending over time.
-// =============================================================================
 
+// ScanResult
 model ScanResult {
   id        String @id @default(uuid()) @db.Uuid
   scanJobId String @unique @db.Uuid
@@ -116,39 +108,13 @@ model ScanResult {
   @@map("scan_results")
 }
 
-// =============================================================================
-// DomainScan  ← NEW
-//
-// One row per unique domain. Acts as the 24-hour cache layer.
-//
-// Why a separate model instead of querying ScanJob history?
-//   "Find the latest successful scan for domain X within 24h" requires:
-//     - String prefix matching on targetUrl
-//     - Joining ScanJob → ScanResult
-//     - Ordering + filtering by completedAt
-//   That's 3 predicates, a join, and an index scan — every cache check.
-//
-//   DomainScan.findUnique({ where: { domain } }) is a single primary-key
-//   lookup — O(1) regardless of scan history volume.
-//
-// Upsert semantics:
-//   - Worker calls db.domainScan.upsert({ where: { domain }, ... })
-//   - Creates on first scan, updates on every subsequent scan
-//   - @unique on domain enforces exactly one row per domain at DB level
-//   - No application-level dedup logic required
-//
-// lastJobId:
-//   Soft FK to the ScanJob that produced the current data.
-//   Not a hard Prisma relation to avoid cascade complications when jobs
-//   are deleted — domain scan history should outlive individual job records.
-// =============================================================================
 
+// DomainScan  
 model DomainScan {
   id     String @id @default(uuid()) @db.Uuid
   domain String @unique  // e.g. "example.com" — normalized, no protocol
 
   // Reference to the most recent job that produced this data
-  // Stored as plain String (not a Prisma relation) to survive job deletion
   lastJobId String? @db.Uuid
 
   // Mirrors ScanResult typed columns for fast filtered queries
@@ -176,8 +142,7 @@ model DomainScan {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Index on lastScannedAt enables fast "is cache stale?" queries
-  // if you ever need to batch-expire or report on stale domains
+  @@index([domain, lastScannedAt(sort: Desc)])
   @@index([lastScannedAt(sort: Desc)])
   @@index([riskLevel])
   @@index([score])
