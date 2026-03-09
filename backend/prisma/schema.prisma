@@ -42,7 +42,7 @@ model User {
 model ScanJob {
   id           String     @id @default(uuid()) @db.Uuid
   userId       String?    @db.Uuid
-  targetUrl    String
+  targetUrl    String  @db.VarChar(2048)
   // Canonical domain extracted from targetUrl (e.g. "example.com").
   // Stored so dedup queries can use an exact index lookup instead of
   // string-matching on targetUrl. Nullable for backwards compatibility
@@ -80,7 +80,7 @@ model ScanResult {
 
   score             Int
   riskLevel         RiskLevel
-  summary           String
+  summary           String  @db.Text
   trackerCount      Int     @default(0)
   cookieCount       Int     @default(0)
   externalDomains   Int     @default(0)
@@ -120,7 +120,7 @@ model DomainScan {
   // Mirrors ScanResult typed columns for fast filtered queries
   score             Int
   riskLevel         RiskLevel
-  summary           String
+  summary           String  @db.Text
   trackerCount      Int     @default(0)
   cookieCount       Int     @default(0)
   externalDomains   Int     @default(0)
