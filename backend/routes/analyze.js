@@ -155,10 +155,12 @@ export default async function analyzeRoute(fastify) {
       job = await db.scanJob.create({
         data: {
           targetUrl: cleanUrl,
+          domain,
           status:    'PENDING',
         },
         select: { id: true },
       });
+      
     } catch (err) {
       await redis.del(lockKey).catch(() => {});
       log.error({ error: err.message }, 'failed to create ScanJob');
