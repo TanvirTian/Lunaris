@@ -57,7 +57,7 @@ function MoonLoader() {
       style={{
         display: 'block',
         margin: '0 auto',
-        filter: 'drop-shadow(0 0 18px rgba(196,168,105,0.45)) drop-shadow(0 0 6px rgba(196,168,105,0.25))',
+        filter: 'drop-shadow(0 0 20px rgba(66,153,225,0.50)) drop-shadow(0 0 8px rgba(99,179,237,0.30))',
       }}
     >
       <defs>
@@ -65,18 +65,18 @@ function MoonLoader() {
           <circle cx={cx} cy={cy} r={r} />
         </clipPath>
         <radialGradient id="moon-lit" cx="36%" cy="32%" r="68%">
-          <stop offset="0%"   stopColor="#f5ecd4" stopOpacity="1" />
-          <stop offset="45%"  stopColor="#d4b878" stopOpacity="0.95" />
-          <stop offset="100%" stopColor="#8a6830" stopOpacity="0.85" />
+          <stop offset="0%"   stopColor="#edf6ff" stopOpacity="1" />
+          <stop offset="45%"  stopColor="#90cdf4" stopOpacity="0.95" />
+          <stop offset="100%" stopColor="#2b6cb0" stopOpacity="0.85" />
         </radialGradient>
         <radialGradient id="moon-shadow" cx="50%" cy="50%" r="50%">
-          <stop offset="0%"   stopColor="#0c0a06" stopOpacity="0.97" />
-          <stop offset="100%" stopColor="#060504" stopOpacity="1" />
+          <stop offset="0%"   stopColor="#060c18" stopOpacity="0.97" />
+          <stop offset="100%" stopColor="#030810" stopOpacity="1" />
         </radialGradient>
       </defs>
 
-      <circle cx={cx} cy={cy} r={r + 5}  fill="none" stroke="rgba(196,168,105,0.14)" strokeWidth={0.8} />
-      <circle cx={cx} cy={cy} r={r + 11} fill="none" stroke="rgba(196,168,105,0.06)" strokeWidth={0.6} strokeDasharray="3 9" />
+      <circle cx={cx} cy={cy} r={r + 5}  fill="none" stroke="rgba(99,179,237,0.18)" strokeWidth={0.8} />
+      <circle cx={cx} cy={cy} r={r + 11} fill="none" stroke="rgba(99,179,237,0.08)" strokeWidth={0.6} strokeDasharray="3 9" />
       <circle cx={cx} cy={cy} r={r} fill="url(#moon-lit)" />
 
       <g clipPath="url(#moon-clip)">
@@ -88,15 +88,15 @@ function MoonLoader() {
       </g>
 
       <g clipPath="url(#moon-clip)" opacity={0.13}>
-        <circle cx={cx - 14} cy={cy - 17} r={7.5} fill="none" stroke="#f5ecd4" strokeWidth={1} />
-        <circle cx={cx + 16} cy={cy + 12} r={5}   fill="none" stroke="#f5ecd4" strokeWidth={0.7} />
-        <circle cx={cx - 4}  cy={cy + 23} r={6}   fill="none" stroke="#f5ecd4" strokeWidth={0.7} />
-        <circle cx={cx + 7}  cy={cy - 27} r={3.5} fill="none" stroke="#f5ecd4" strokeWidth={0.6} />
-        <circle cx={cx - 25} cy={cy + 4}  r={3}   fill="none" stroke="#f5ecd4" strokeWidth={0.5} />
+        <circle cx={cx - 14} cy={cy - 17} r={7.5} fill="none" stroke="#bee3f8" strokeWidth={1} />
+        <circle cx={cx + 16} cy={cy + 12} r={5}   fill="none" stroke="#bee3f8" strokeWidth={0.7} />
+        <circle cx={cx - 4}  cy={cy + 23} r={6}   fill="none" stroke="#bee3f8" strokeWidth={0.7} />
+        <circle cx={cx + 7}  cy={cy - 27} r={3.5} fill="none" stroke="#bee3f8" strokeWidth={0.6} />
+        <circle cx={cx - 25} cy={cy + 4}  r={3}   fill="none" stroke="#bee3f8" strokeWidth={0.5} />
       </g>
 
       <circle cx={cx} cy={cy} r={r} fill="none"
-        stroke="#f5ecd4" strokeWidth={1.2} strokeOpacity={0.22}
+        stroke="#bee3f8" strokeWidth={1.2} strokeOpacity={0.22}
         clipPath="url(#moon-clip)" />
     </svg>
   );
@@ -296,7 +296,7 @@ export default function App() {
       {/* ── Footer ──────────────────────────────────────────────── */}
       <footer className="footer">
         <p className="footer-brand">LUNARIS</p>
-        <p>No data stored · No cookies set · No irony intended</p>
+        <p>You visited a website. It visited you back.</p>
       </footer>
 
     </div>
