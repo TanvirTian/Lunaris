@@ -140,7 +140,9 @@ async function processScanJob(job) {
 export const scanWorker = new Worker(QUEUE_NAME, processScanJob, {
   connection:      redis,
   concurrency:     WORKER_CONCURRENCY,
-  lockDuration:    120_000, // 2 minutes — max expected crawl time
+  lockDuration:    150_000, // 2.5 minutes — max expected crawl time
+                            // worst case: 4 pages × 25s nav + analysis overhead
+                            // 120s was tight; 150s gives a safe margin
   lockRenewTime:   30_000,  // renew every 30s (must be < lockDuration / 2)
   stalledInterval: 30_000,
 });
