@@ -1,6 +1,7 @@
 services:
 
   postgres:
+    container_name: lunaris_database
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -18,8 +19,14 @@ services:
       retries: 10
     networks:
       - lunaris
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
 
   redis:
+    container_name: lunaris_cache
     image: redis:7-alpine
     restart: unless-stopped
     volumes:
@@ -33,11 +40,18 @@ services:
       retries: 10
     networks:
       - lunaris
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
 
   backend:
+    container_name: lunaris_backend
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: runner
     restart: unless-stopped
     command: >
       sh -c "npx prisma generate &&
@@ -61,11 +75,18 @@ services:
         condition: service_healthy
     networks:
       - lunaris
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
 
   prisma-studio:
+    container_name: lunaris_prisma_studio
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: runner
     restart: unless-stopped
     command: npx prisma studio --port 5555 --hostname 0.0.0.0
     environment:
@@ -80,11 +101,18 @@ services:
         condition: service_healthy
     networks:
       - lunaris
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
   worker:
+    container_name: lunaris_worker
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: worker-runtime
     restart: unless-stopped
     command: >
       sh -c "npx prisma generate &&
@@ -94,7 +122,7 @@ services:
       REDIS_URL: redis://redis:6379
       NODE_ENV: development
       LOG_LEVEL: info
-      WORKER_CONCURRENCY: 2
+      WORKER_CONCURRENCY: 1
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -108,7 +136,16 @@ services:
     networks:
       - lunaris
 
+
+    shm_size: '256m'
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 800M
+
   frontend:
+    container_name: lunaris_frontend
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -124,8 +161,14 @@ services:
       - nginx
     networks:
       - lunaris
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
   nginx:
+    container_name: lunaris_router
     image: nginx:1.27-alpine
     restart: unless-stopped
     ports:
@@ -141,8 +184,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 64M
 
   prometheus:
+    container_name: lunaris_metrics
     image: prom/prometheus:v2.51.0
     restart: unless-stopped
     command:
@@ -165,8 +214,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
   grafana:
+    container_name: lunaris_dashboard
     image: grafana/grafana:10.4.2
     restart: unless-stopped
     environment:
@@ -192,6 +247,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
 networks:
   lunaris:
