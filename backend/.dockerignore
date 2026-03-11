@@ -1,11 +1,11 @@
-# Dependencies (reinstalled during build)
+# Dependencies — reinstalled fresh during build via npm ci
 node_modules
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Environment / Secrets
+# Environment / Secrets — never bake these into images
 .env
 .env.*
 !.env.example
@@ -23,7 +23,7 @@ pids/
 *.seed
 *.pid.lock
 
-# Tests / Coverage / Dev-only code
+# Tests / Coverage / Dev-only
 *.test.js
 *.spec.js
 __tests__/
@@ -34,14 +34,14 @@ cypress/
 playwright-report/
 test-results/
 
-# Build Artifacts
+# Build artifacts
 dist/
 build/
 .tmp/
 .cache/
 .nyc_output/
 
-# TypeScript (if using)
+# TypeScript
 *.tsbuildinfo
 
 # IDE / Editor
@@ -50,16 +50,14 @@ build/
 *.swp
 *.swo
 
-# Docker files (if not needed in image)
-Dockerfile
-docker-compose*.yml
-.dockerignore
-
-# OS Artifacts
+# OS artifacts
 .DS_Store
 Thumbs.db
 
-# Documentation / Misc
-README.md
+# Docker files — no reason to copy these into the build context
+Dockerfile
+.dockerignore
+
+# Documentation
+# NOTE: do NOT add prisma/migrations here — migrate deploy needs them at runtime
 docs/
-*.md
