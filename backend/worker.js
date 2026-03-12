@@ -4,6 +4,7 @@ import { db, disconnectDb } from './lib/db.js';
 import { dlq, QUEUE_NAME } from './lib/queue.js';
 import { logger } from './lib/logger.js';
 import { metrics, activeScansGauge, scanDurationSeconds } from './lib/metrics.js';
+import { createServer } from 'http';
 import { crawlWebsite } from './services/crawler.js';
 import { analyzePrivacy } from './services/analyzer.js';
 
@@ -78,22 +79,6 @@ async function processScanJob(job) {
 
   const domain = extractDomain(url);
 
-  // ── Persist (transaction) ─────────────────────────────────────────────────
-  //
-  // Three operations in a single transaction:
-  //   1. ScanResult.create  — append a historical record of this run
-  //   2. DomainScan.upsert  — update the single-row domain cache
-  //   3. ScanJob.update     — mark job SUCCESS
-  //
-  // Why transaction?
-  //   If DomainScan.upsert succeeds but ScanJob.update fails, the next
-  //   cache check would return data tied to a job that still shows RUNNING.
-  //   The transaction ensures all three succeed or all three roll back.
-  //
-  // Why upsert for DomainScan?
-  //   Prisma's upsert maps to PostgreSQL's INSERT ... ON CONFLICT DO UPDATE.
-  //   It's atomic at the database level — no separate SELECT + conditional
-  //   INSERT/UPDATE needed, no TOCTOU race condition possible.
   await db.$transaction([
     db.scanResult.create({
       data: {
@@ -108,14 +93,14 @@ async function processScanJob(job) {
         domain,
         lastJobId:     jobId,
         lastScannedAt: new Date(),
-        ...resultFields,
+                         ...resultFields,
       },
       update: {
         lastJobId:     jobId,
         lastScannedAt: new Date(),
-        // Update all result fields so the cache row always reflects
-        // the most recent scan, not the first one ever seen.
-        ...resultFields,
+                         // Update all result fields so the cache row always reflects
+                         // the most recent scan, not the first one ever seen.
+                         ...resultFields,
       },
     }),
 
@@ -141,10 +126,10 @@ export const scanWorker = new Worker(QUEUE_NAME, processScanJob, {
   connection:      redis,
   concurrency:     WORKER_CONCURRENCY,
   lockDuration:    150_000, // 2.5 minutes — max expected crawl time
-                            // worst case: 4 pages × 25s nav + analysis overhead
-                            // 120s was tight; 150s gives a safe margin
+  // worst case: 4 pages × 25s nav + analysis overhead
+  // 120s was tight; 150s gives a safe margin
   lockRenewTime:   30_000,  // renew every 30s (must be < lockDuration / 2)
-  stalledInterval: 30_000,
+stalledInterval: 30_000,
 });
 
 // ── Worker event handlers ─────────────────────────────────────────────────────
@@ -191,7 +176,7 @@ scanWorker.on('failed', async (job, err) => {
         data:  {
           status:       'FAILED',
           errorMessage: err.message?.slice(0, 1000) ?? 'Unknown error',
-          completedAt:  new Date(),
+                              completedAt:  new Date(),
         },
       }).catch((dbErr) => logger.error({ error: dbErr.message }, 'failed to update job status'));
     }
@@ -216,15 +201,54 @@ export async function shutdownWorker() {
   logger.info('worker stopped');
 }
 
+// ── Metrics HTTP server ───────────────────────────────────────────────────────
+//
+// The worker is a separate process from the backend — it has its own in-memory
+// copy of lib/metrics.js. Backend's /metrics only sees backend counters.
+// Worker counters (scans_succeeded, scans_failed, active_jobs, durations) are
+// invisible to Prometheus unless the worker exposes its own /metrics endpoint.
+//
+// Runs on METRICS_PORT (default 9091). Prometheus scrapes it via the
+// lunaris_worker job in prometheus.yml: targets: ['worker:9091']
+// Grafana: filter worker metrics with {service="lunaris-worker"}
+//          filter backend metrics with {service="lunaris-backend"}
+
+const METRICS_PORT = parseInt(process.env.METRICS_PORT || '9091', 10);
+
+const metricsServer = createServer(async (req, res) => {
+  if (req.url === '/metrics') {
+    try {
+      const metricsText = await metrics.getMetrics();
+      res.writeHead(200, { 'Content-Type': metrics.contentType() });
+      res.end(metricsText);
+    } catch (err) {
+      logger.error({ error: err.message }, 'failed to collect worker metrics');
+      res.writeHead(500);
+      res.end('metrics collection failed');
+    }
+  } else if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', service: 'worker' }));
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+
 // ── Standalone process entry point ───────────────────────────────────────────
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   logger.info({ concurrency: WORKER_CONCURRENCY }, 'worker process started');
 
+  metricsServer.listen(METRICS_PORT, '0.0.0.0', () => {
+    logger.info({ port: METRICS_PORT }, 'worker metrics server listening');
+  });
+
   const signals = ['SIGINT', 'SIGTERM'];
   for (const sig of signals) {
     process.once(sig, async () => {
       logger.info(`received ${sig}`);
+      metricsServer.close();
       await shutdownWorker();
       await disconnectDb();
       process.exit(0);

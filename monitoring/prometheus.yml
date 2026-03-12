@@ -1,27 +1,12 @@
-# Prometheus configuration for Lunaris local development
-# ─────────────────────────────────────────────────────────────────────────────
-# Scrapes backend /metrics every 15 seconds.
-# Uses Docker Compose service names for hostname resolution
-# (prometheus can reach backend:8000 because they're on the same 'lunaris' network).
-
 global:
-  scrape_interval:     15s   # How often Prometheus fetches /metrics
-  evaluation_interval: 15s   # How often alerting rules are evaluated
-  scrape_timeout:      10s   # Timeout per scrape request
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  scrape_timeout:      10s
 
-  # External labels added to all metrics — useful if you ever federate
-  # this into a central Prometheus or push to Grafana Cloud
   external_labels:
     environment: 'development'
     app:         'lunaris'
 
-# Alertmanager (not configured for local dev — add here for production)
-# alerting:
-#   alertmanagers:
-#     - static_configs:
-#         - targets: ['alertmanager:9093']
-
-# Scrape configurations
 scrape_configs:
 
   # Prometheus self-monitoring
@@ -29,15 +14,20 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  # Lunaris backend — the primary source of application metrics
+
   - job_name: 'lunaris_backend'
     metrics_path: '/metrics'
     static_configs:
       - targets: ['backend:8000']
-    # Add labels to distinguish from other jobs in Grafana
     relabel_configs:
       - target_label: service
         replacement:  'lunaris-backend'
 
-  # Node.js process metrics are included via prom-client's collectDefaultMetrics()
-  # and exposed at the same /metrics endpoint — no separate exporter needed.
+
+  - job_name: 'lunaris_worker'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['worker:9091']
+    relabel_configs:
+      - target_label: service
+        replacement:  'lunaris-worker'
