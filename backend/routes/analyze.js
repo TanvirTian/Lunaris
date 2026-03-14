@@ -14,7 +14,7 @@ const CACHE_DELAY_MAX_MS = 600;
 const DEDUP_LOCK_KEY = (domain) => `dedup:domain:${domain}`;
 const DEDUP_TTL_S    = 60 * 15; // 15 minutes — covers max crawl duration
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// Helpers 
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -29,7 +29,7 @@ function extractDomain(normalizedUrl) {
   return hostname.startsWith('www.') ? hostname.slice(4) : hostname;
 }
 
-// ── Route ─────────────────────────────────────────────────────────────────────
+// Route 
 
 export default async function analyzeRoute(fastify) {
   fastify.post('/analyze', {
@@ -42,15 +42,14 @@ export default async function analyzeRoute(fastify) {
         },
       },
     },
-    // Exclude this specific route from global rate limiting if you want
-    // cache-hit requests (which are cheap) to not count against the limit.
-    // Remove this config block to apply the global 10/min limit uniformly.
+    
+
     // config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
   }, async (request, reply) => {
     const requestId = request.id;
     const log = logger.child({ requestId });
 
-    // ── 1. URL normalization + validation ─────────────────────────────────────
+    // URL normalization + validation 
     let cleanUrl;
     try {
       cleanUrl = normalizeUrl(request.body.url);
@@ -71,7 +70,7 @@ export default async function analyzeRoute(fastify) {
     });
 
     if (domainScan && domainScan.lastScannedAt > cacheCutoff) {
-      // ── Cache HIT ─────────────────────────────────────────────────────────
+      // Cache HIT
       cacheHitsTotal.inc();
       metrics.increment('scans_cached');
 
@@ -126,8 +125,9 @@ export default async function analyzeRoute(fastify) {
     if (!lockAcquired) {
       await new Promise((r) => setTimeout(r, 200));
 
+
       const pendingJob = await db.scanJob.findFirst({
-        where:   { targetUrl: cleanUrl, status: { in: ['PENDING', 'RUNNING'] } },
+        where:   { domain, status: { in: ['PENDING', 'RUNNING'] } },
         orderBy: { createdAt: 'desc' },
         select:  { id: true, status: true },
       });
@@ -149,7 +149,7 @@ export default async function analyzeRoute(fastify) {
       await redis.del(lockKey).catch(() => {});
     }
 
-    // ── 4. Create ScanJob (PENDING) ───────────────────────────────────────────
+    // Create ScanJob (PENDING) 
     let job;
     try {
       job = await db.scanJob.create({
@@ -167,7 +167,7 @@ export default async function analyzeRoute(fastify) {
       return reply.status(500).send({ error: 'Failed to create scan job. Please try again.' });
     }
 
-    // ── 5. Enqueue to BullMQ ──────────────────────────────────────────────────
+    // Enqueue to BullMQ
     try {
       await scanQueue.add('scan', {
         jobId: job.id,
@@ -204,7 +204,7 @@ export default async function analyzeRoute(fastify) {
   });
 }
 
-// ── Error message humanizer ───────────────────────────────────────────────────
+// Error message humanizer 
 
 function friendlyError(msg) {
   if (msg.includes('URL_NO_TLD'))

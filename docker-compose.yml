@@ -183,7 +183,7 @@ services:
     networks:
       - lunaris
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:80/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/nginx-health"]
       interval: 10s
       timeout: 5s
       retries: 5

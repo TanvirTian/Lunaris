@@ -5,6 +5,8 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  // To configure connection pool size, append ?connection_limit=10 to DATABASE_URL:
+  // postgresql://user:pass@host:5432/lunaris?connection_limit=10
 }
 
 
@@ -25,7 +27,7 @@ enum RiskLevel {
 
 
 // User
-// Stub model - userId is nullable on ScanJob so the app works without auth.
+// Stub model. userId is nullable on ScanJob so the app works without auth.
 model User {
   id        String    @id @default(uuid()) @db.Uuid
   email     String    @unique
@@ -58,16 +60,18 @@ model ScanJob {
   user         User?       @relation(fields: [userId], references: [id])
   result       ScanResult?
 
-  @@index([targetUrl])
   @@index([domain])
   @@index([status])
   @@index([userId])
   @@index([createdAt(sort: Desc)])
+  // Covers result fetch by URL with time ordering
   @@index([targetUrl, createdAt(sort: Desc)])
-  // Composite: covers the dedup query WHERE domain = ? AND status IN (...)
+  // Covers dedup query: WHERE domain = ? AND status IN ('PENDING', 'RUNNING')
   @@index([domain, status])
-  // Composite: covers worker polling WHERE status IN (...) ORDER BY createdAt
+  // Covers worker polling: WHERE status IN (...) ORDER BY createdAt
   @@index([status, createdAt(sort: Desc)])
+  // Covers cleanup query: WHERE completedAt < ? AND status IN ('SUCCESS', 'FAILED')
+  @@index([completedAt, status])
 
   @@map("scan_jobs")
 }
@@ -102,8 +106,9 @@ model ScanResult {
   @@index([score])
   @@index([riskLevel])
   @@index([createdAt(sort: Desc)])
-  @@index([canvasFingerprint])
-  @@index([keylogger])
+  // canvasFingerprint and keylogger boolean indexes removed —
+  // PostgreSQL ignores low-cardinality boolean indexes (only 2 values,
+  // selectivity too low). They waste space and slow writes with no benefit.
 
   @@map("scan_results")
 }
@@ -114,7 +119,8 @@ model DomainScan {
   id     String @id @default(uuid()) @db.Uuid
   domain String @unique  // e.g. "example.com" — normalized, no protocol
 
-  // Reference to the most recent job that produced this data
+  // Reference to the most recent job that produced this data.
+  // preserve DomainScan cache rows. Handle null gracefully in all consumers.
   lastJobId String? @db.Uuid
 
   // Mirrors ScanResult typed columns for fast filtered queries

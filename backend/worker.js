@@ -5,6 +5,7 @@ import { dlq, QUEUE_NAME } from './lib/queue.js';
 import { logger } from './lib/logger.js';
 import { metrics, activeScansGauge, scanDurationSeconds } from './lib/metrics.js';
 import { createServer } from 'http';
+import { runCleanup } from './cleanup.js';
 import { crawlWebsite } from './services/crawler.js';
 import { analyzePrivacy } from './services/analyzer.js';
 
@@ -244,10 +245,37 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
     logger.info({ port: METRICS_PORT }, 'worker metrics server listening');
   });
 
+  // ── Scheduled cleanup ───────────────────────────────────────────────────────
+  // Runs every 6 hours. Deletes scan_jobs + cascade scan_results older than 72h.
+  // DomainScan rows are preserved — they are the cache layer, not audit logs.
+  // Running inside the worker process avoids needing a separate cron container.
+  const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+  // Run once on startup (after a short delay to let the worker settle),
+  // then on the interval.
+  setTimeout(async () => {
+    try {
+      const result = await runCleanup();
+      logger.info(result, 'startup cleanup complete');
+    } catch (err) {
+      logger.error({ error: err.message }, 'startup cleanup failed — will retry in 6h');
+    }
+  }, 30_000); // 30 second delay on startup
+
+  const cleanupTimer = setInterval(async () => {
+    try {
+      const result = await runCleanup();
+      logger.info(result, 'scheduled cleanup complete');
+    } catch (err) {
+      logger.error({ error: err.message }, 'scheduled cleanup failed — will retry in 6h');
+    }
+  }, CLEANUP_INTERVAL_MS);
+
   const signals = ['SIGINT', 'SIGTERM'];
   for (const sig of signals) {
     process.once(sig, async () => {
       logger.info(`received ${sig}`);
+      clearInterval(cleanupTimer);
       metricsServer.close();
       await shutdownWorker();
       await disconnectDb();
