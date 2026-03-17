@@ -50,6 +50,7 @@ Scans are processed asynchronously. The API returns a job ID immediately and the
 ## Project Structure
 ```
 ├── backend  
+│ ├── cleanup.js  
 │ ├── Dockerfile  
 │ ├── lib  
 │ │ ├── db.js  
@@ -65,6 +66,12 @@ Scans are processed asynchronously. The API returns a job ID immediately and the
 │ │ │ ├── 20260223184806_init  
 │ │ │ │ └── migration.sql  
 │ │ │ ├── 20260302200744_add_domain_scans  
+│ │ │ │ └── migration.sql  
+│ │ │ ├── 20260309145922_add_domain_to_scanjob  
+│ │ │ │ └── migration.sql  
+│ │ │ ├── 20260309155438_enforce_varchar_and_text_types  
+│ │ │ │ └── migration.sql  
+│ │ │ ├── 20260313193853_add_cleanup_index_remove_boolean_indexes  
 │ │ │ │ └── migration.sql  
 │ │ │ └── migration_lock.toml  
 │ │ └── schema.prisma  
@@ -107,7 +114,6 @@ Scans are processed asynchronously. The API returns a job ID immediately and the
 │ │ └── styles.css  
 │ └── vite.config.js  
 ├── LICENSE.MD  
-├── migration_add_domain_scans.sql  
 ├── monitoring  
 │ ├── grafana  
 │ │ ├── dashboards  
@@ -118,6 +124,8 @@ Scans are processed asynchronously. The API returns a job ID immediately and the
 │ │ └── datasources  
 │ │ └── datasource.yml  
 │ └── prometheus.yml  
+├── nginx  
+│ └── nginx.conf  
 └── README.md
 ```
 
@@ -371,6 +379,3 @@ The architecture supports horizontal scaling without code changes:
 
 
 Built as a production system design study in asynchronous processing, browser automation, and privacy analysis.
-
-
-
