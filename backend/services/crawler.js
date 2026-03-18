@@ -14,6 +14,115 @@ const TIMEOUTS = {
   jsSettle:   2_000,
 };
 
+// ─── Browser Pool ─────────────────────────────────────────────────────────────
+//
+// Launching Chromium takes 300-500ms of cold startup time per scan.
+// A browser pool keeps one Chromium instance alive between scans and creates
+// a fresh isolated BrowserContext per scan instead.
+//
+// Why contexts instead of fresh browsers?
+//   Each BrowserContext is fully isolated — separate cookies, storage, cache,
+//   network state, and service workers. One scan cannot see another scan's data.
+//   This is the same isolation guarantee as launching a fresh browser, but
+//   without the 300-500ms startup cost.
+//
+// Lifecycle:
+//   - Browser is launched on first scan request (lazy init)
+//   - Subsequent scans reuse the same browser, each gets a fresh context
+//   - If the browser crashes, _browser is set to null and re-launched next scan
+//   - On worker SIGTERM/SIGINT, call closeBrowser() to clean up gracefully
+
+let _browser = null;
+let _browserLaunchPromise = null;
+
+const BROWSER_ARGS = [
+  // ── Sandbox / process model ──────────────────────────────────────────
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+
+  // ── GPU / rendering ──────────────────────────────────────────────────
+  '--disable-gpu',
+  '--disable-gpu-sandbox',
+  '--disable-software-rasterizer',
+  '--disable-dev-shm-usage',
+
+  // ── Background services ───────────────────────────────────────────────
+  '--disable-background-networking',
+  '--disable-background-timer-throttling',
+  '--disable-backgrounding-occluded-windows',
+  '--disable-breakpad',
+  '--disable-client-side-phishing-detection',
+  '--disable-component-update',
+  '--disable-default-apps',
+  '--disable-domain-reliability',
+  '--disable-extensions',
+  '--disable-features=AudioServiceOutOfProcess,ImprovedCookieControls,LazyFrameLoading,GlobalMediaControls,DestroyProfileOnBrowserClose,MediaRouter,DialMediaRouteProvider,AcceptCHFrame,AutoExpandDetailsElement,CertificateTransparencyComponentUpdater,AvoidUnnecessaryBeforeUnloadCheckSync,Translate',
+  '--disable-hang-monitor',
+  '--disable-ipc-flooding-protection',
+  '--disable-notifications',
+  '--disable-offer-store-unmasked-wallet-cards',
+  '--disable-popup-blocking',
+  '--disable-print-preview',
+  '--disable-prompt-on-repost',
+  '--disable-renderer-backgrounding',
+  '--disable-search-engine-choice-screen',
+  '--disable-speech-api',
+  '--disable-sync',
+  '--disable-translate',
+  '--metrics-recording-only',
+  '--mute-audio',
+  '--no-default-browser-check',
+  '--no-first-run',
+  '--no-pings',
+  '--password-store=basic',
+  '--use-mock-keychain',
+  '--autoplay-policy=user-gesture-required',
+  '--hide-scrollbars',
+  '--ignore-certificate-errors',
+];
+
+async function getBrowser() {
+  // If browser is alive return it immediately
+  if (_browser && _browser.isConnected()) return _browser;
+
+  // If a launch is already in progress, wait for it (prevents double-launch
+  // when two scans arrive simultaneously on a cold worker)
+  if (_browserLaunchPromise) return _browserLaunchPromise;
+
+  _browserLaunchPromise = chromium.launch({
+    headless:       true,
+    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+    args:           BROWSER_ARGS,
+  }).then((b) => {
+    _browser = b;
+    _browserLaunchPromise = null;
+
+    // If the browser disconnects unexpectedly (crash, OOM kill), clear the
+    // reference so the next scan triggers a fresh launch instead of trying
+    // to create contexts on a dead browser.
+    b.on('disconnected', () => {
+      console.warn('[crawler] browser disconnected — will re-launch on next scan');
+      _browser = null;
+      _browserLaunchPromise = null;
+    });
+
+    return b;
+  }).catch((err) => {
+    _browserLaunchPromise = null;
+    throw err;
+  });
+
+  return _browserLaunchPromise;
+}
+
+// Call this in the worker shutdown handler so Chromium exits cleanly
+export async function closeBrowser() {
+  if (_browser) {
+    await _browser.close().catch(() => {});
+    _browser = null;
+  }
+}
+
 // ─── Layer 1: URL Normalization ───────────────────────────────────────────────
 
 export function normalizeUrl(raw) {
@@ -608,13 +717,6 @@ async function crawlSinglePage(page, url, baseHostname, isHomepage = false) {
   page.setDefaultNavigationTimeout(TIMEOUTS.navigation); // 25s for page loads
   page.setDefaultTimeout(5_000);                         // 5s for evaluate/waitFor*
 
-  // Block resource types that carry no privacy signal — 40–60% faster
-  await page.route('**/*', (route) => {
-    const type = route.request().resourceType();
-    if (['image', 'font', 'media', 'stylesheet'].includes(type)) return route.abort();
-    return route.continue();
-  });
-
   page.on('request', (req) => {
     const reqUrl   = req.url();
     const method   = req.method();
@@ -640,8 +742,6 @@ async function crawlSinglePage(page, url, baseHostname, isHomepage = false) {
     response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: TIMEOUTS.navigation });
   } catch (err) {
     // Reclassify raw Playwright / Chromium net:: errors into clean, monitorable
-    // codes. The friendlyError() mapper in routes/analyze.js then converts these
-    // to user-readable messages without leaking internal detail.
     const m = err.message || '';
     if (/TimeoutError|timeout/i.test(m))                throw new Error(`UNREACHABLE:NAVIGATION_TIMEOUT:${url}`);
     if (/ERR_NAME_NOT_RESOLVED/i.test(m))               throw new Error(`DNS_FAILED:ENOTFOUND:${url}`);
@@ -665,11 +765,14 @@ async function crawlSinglePage(page, url, baseHostname, isHomepage = false) {
   ]);
 
   // Let post-load JS execute. Race against networkidle so fast pages don't
-  // always pay the full TIMEOUTS.jsSettle penalty.
   await Promise.race([
     page.waitForLoadState('networkidle').catch(() => {}),
     page.waitForTimeout(TIMEOUTS.jsSettle),
   ]);
+
+  // Halt any residual loading — lazy images, background trackers, long-poll.
+  await page.evaluate(() => window.stop()).catch(() => {});
+
   await detectNavigationFailure(page, response, requests, url, isHomepage);
 
   const fingerprintSignals = await page.evaluate(() => window.__privacySignals || {}).catch(() => ({}));
@@ -698,7 +801,7 @@ async function crawlSinglePage(page, url, baseHostname, isHomepage = false) {
 
   const pageText = await page.evaluate(() => document.body?.innerText?.slice(0, 5000) || '').catch(() => '');
 
-  return { url, requests, webSockets, redirectChains, fingerprintSignals, context, sensitivePayloadFound, scriptData, storageData, internalLinks: [...new Set(internalLinks)], pageText };
+  return { url, requests, webSockets, redirectChains, fingerprintSignals, context, sensitivePayloadFound, scriptData, storageData, internalLinks, pageText };
 }
 
 // ─── Parallel sub-page crawler ────────────────────────────────────────────────
@@ -733,76 +836,19 @@ async function crawlPagesParallel(pagesToCrawl, context, baseHostname, concurren
 export async function crawlWebsite(rawUrl) {
   const url      = normalizeUrl(rawUrl);
   const hostname = new URL(url).hostname;
-  const dnsResult = await resolveDns(hostname);
+
+  // Run DNS resolution and browser acquisition in parallel.
+  const [dnsResult, browser] = await Promise.all([
+    resolveDns(hostname),
+    getBrowser(),
+  ]);
   assertNotPrivate(hostname, dnsResult.address);
-
-  const browser = await chromium.launch({
-    headless:       true,
-    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
-    args: [
-      // ── Sandbox / process model ──────────────────────────────────────────
-      // Required in Docker: no user namespace for the sandbox helper process.
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-
-      // ── GPU / rendering ──────────────────────────────────────────────────
-      // We never render pixels — disable the entire GPU stack.
-      '--disable-gpu',
-      '--disable-gpu-sandbox',
-      '--disable-software-rasterizer',
-      '--disable-dev-shm-usage',       // /dev/shm in Docker is only 64MB by
-                                       // default — Chromium uses it for shared
-                                       // memory and will crash without this.
-
-      // ── Background services ───────────────────────────────────────────────
-      // None of these run during a headless crawl but each spawns threads/IPC.
-      '--disable-background-networking',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-breakpad',            // crash reporter — writes to disk on OOM
-      '--disable-client-side-phishing-detection',
-      '--disable-component-update',
-      '--disable-default-apps',
-      '--disable-domain-reliability',  // UMA/crash-ping network calls
-      '--disable-extensions',
-      '--disable-features=AudioServiceOutOfProcess,ImprovedCookieControls,LazyFrameLoading,GlobalMediaControls,DestroyProfileOnBrowserClose,MediaRouter,DialMediaRouteProvider,AcceptCHFrame,AutoExpandDetailsElement,CertificateTransparencyComponentUpdater,AvoidUnnecessaryBeforeUnloadCheckSync,Translate',
-      '--disable-hang-monitor',
-      '--disable-ipc-flooding-protection',
-      '--disable-notifications',
-      '--disable-offer-store-unmasked-wallet-cards',
-      '--disable-popup-blocking',
-      '--disable-print-preview',
-      '--disable-prompt-on-repost',
-      '--disable-renderer-backgrounding',
-      '--disable-search-engine-choice-screen',
-      '--disable-speech-api',
-      '--disable-sync',
-      '--disable-translate',
-      '--metrics-recording-only',      // keep UMA structures but don't send
-      '--mute-audio',
-      '--no-default-browser-check',
-      '--no-first-run',
-      '--no-pings',
-      '--no-zygote',                   // skips the zygote broker process;
-                                       // saves one process + ~20MB RSS in
-                                       // single-tab headless workloads
-      '--password-store=basic',
-      '--use-mock-keychain',
-      '--autoplay-policy=user-gesture-required',
-      '--hide-scrollbars',
-      '--ignore-certificate-errors',   // avoids throw on bad TLS — we already
-                                       // catch and reclassify nav errors above
-    ],
-  });
 
   const ctx = await browser.newContext({
     userAgent:        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     serviceWorkers:   'block',
 
-    // viewport: null tells Playwright not to emulate any screen size.
-    // The default (1280×720) allocates a full GPU compositing surface and
-    // raster tile buffers even in headless mode — wasted memory and init time.
-    // With null, Chromium skips surface allocation entirely.
+    
     viewport:         null,
 
     // Suppress TLS validation at the context level — belt-and-suspenders with
@@ -820,6 +866,12 @@ export async function crawlWebsite(rawUrl) {
 
   await ctx.addInitScript(FINGERPRINT_DETECTOR_SCRIPT);
 
+  await ctx.route('**/*', (route) => {
+    const type = route.request().resourceType();
+    if (['image', 'font', 'media', 'stylesheet'].includes(type)) return route.abort();
+    return route.continue();
+  });
+
   const allPageResults = [];
   let   responseHeaders = {};
 
@@ -829,10 +881,6 @@ export async function crawlWebsite(rawUrl) {
 
     // Capture the main document's response headers for CSP analysis.
     // Exact URL match misses common redirect patterns:
-    //   http://example.com  →  https://example.com
-    //   example.com         →  www.example.com
-    // Instead, accept the first 2xx response whose hostname matches the base
-    // hostname (with or without www), and ignore sub-resource responses.
     let headersCaptured = false;
     homePage.on('response', (res) => {
       if (headersCaptured) return;
@@ -847,11 +895,15 @@ export async function crawlWebsite(rawUrl) {
       } catch { /* non-parseable URL — skip */ }
     });
 
-    const homeResult = await crawlSinglePage(homePage, url, hostname, true);
+    // Run homepage crawl and sitemap fetch in parallel.
+    // fetchSitemapUrls makes an independent HTTP request to /sitemap.xml —
+    const [homeResult, sitemapUrls] = await Promise.all([
+      crawlSinglePage(homePage, url, hostname, true),
+      fetchSitemapUrls(url, homePage),
+    ]);
     allPageResults.push(homeResult);
 
     const cspAnalysis  = analyzeCSP(responseHeaders);
-    const sitemapUrls  = await fetchSitemapUrls(url, homePage);
     // Pass the homepage URL so it is excluded from sub-page candidates.
     // Self-referential links (<a href="/">) are nearly universal; without this
     // the homepage would appear in internalLinks and be scored and re-crawled.
@@ -931,6 +983,9 @@ export async function crawlWebsite(rawUrl) {
         asnResults,
       };
   } finally {
-    await browser.close();
+    // Close only the context, not the browser — the browser stays alive for
+    // the next scan. Closing the context releases all pages, cookies, storage,
+    // and network connections associated with this scan.
+    await ctx.close().catch(() => {});
   }
 }

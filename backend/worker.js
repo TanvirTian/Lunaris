@@ -6,7 +6,7 @@ import { logger } from './lib/logger.js';
 import { metrics, activeScansGauge, scanDurationSeconds } from './lib/metrics.js';
 import { createServer } from 'http';
 import { runCleanup } from './cleanup.js';
-import { crawlWebsite } from './services/crawler.js';
+import { crawlWebsite, closeBrowser } from './services/crawler.js';
 import { analyzePrivacy } from './services/analyzer.js';
 
 const WORKER_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || '2', 10);
@@ -278,6 +278,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       clearInterval(cleanupTimer);
       metricsServer.close();
       await shutdownWorker();
+      await closeBrowser(); // gracefully close the shared Chromium instance
       await disconnectDb();
       process.exit(0);
     });
